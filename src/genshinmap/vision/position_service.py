@@ -27,7 +27,9 @@ from .position_tracker import (
     Position,
     PositionTracker,
     ensure_reference,
+    ensure_water_reference,
     reference_path,
+    water_reference_path,
 )
 from .prompt_detector import PromptDetector
 
@@ -168,6 +170,12 @@ class PositionService(QObject):
                 ensure_reference(meta, ref, progress=lambda d, n: self.status.emit(
                     f"Готовлю карту для позиции: {d}/{n} тайлов"))
             tracker = PositionTracker(meta, ref, scale=scale)
+            water = water_reference_path(meta, assets_dir)
+            if not water.exists():
+                self.status.emit("Готовлю маску воды (разово)…")
+                ensure_water_reference(meta, water, progress=lambda d, n: self.status.emit(
+                    f"Готовлю маску воды: {d}/{n} тайлов"))
+            tracker.set_water(water)
         except Exception as e:  # noqa: BLE001 — нет сети/битый кеш: не роняем приложение
             self.status.emit(f"Не удалось подготовить карту: {e}")
             return
@@ -202,7 +210,8 @@ class PositionService(QObject):
                 gray = cv2.cvtColor(shot, cv2.COLOR_BGRA2GRAY)
                 scale_before = tr.scale
                 with self._lock:
-                    pos = tr.locate(gray, mon["height"])
+                    pos = tr.locate(gray, mon["height"],
+                                    minimap_bgr=cv2.cvtColor(shot, cv2.COLOR_BGRA2BGR))
                 self._check_prompts(sct, mon)
                 self._read_pickup(sct, mon)
                 self._read_uid(sct, mon)

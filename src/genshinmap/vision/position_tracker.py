@@ -46,6 +46,13 @@ SCALE_SWEEP = tuple(round(0.45 * 1.13 ** i, 3) for i in range(16))   # 0.45 … 
 # т.п.) — сильно приближена (~0.575). Эти масштабы пробуем всегда (быстро);
 # широкий перебор — только если ни один не подошёл (раз в SWEEP_EVERY неудач).
 KNOWN_SCALES = (DEFAULT_SCALE, 0.575)
+# Запасной поиск по ФОРМЕ ВОДЫ: неразведанные места мини-карта рисует однотонным
+# силуэтом (нет деталей), плюс яркий конус камеры — по яркости не находится, а
+# береговая линия видна всегда. Маска воды карты — зум -2 (1/4), кеш water_*.png.
+WATER_ZOOM = -2
+WATER_OK = 0.5            # порог совпадения масок воды
+WATER_MARGIN = 0.08       # и отрыв от второго места — строже, чем по яркости
+WATER_FRAC = (0.05, 0.85)  # доля воды на мини-карте: меньше/больше — сравнивать нечего
 SWEEP_EVERY = 5
 SCALE_SWITCH = 0.15       # найденный масштаб отличается больше — переключаемся на него
 PEAKS_SWEEP = 4             # кандидатов с каждого масштаба, пока масштаб неизвестен
@@ -72,6 +79,7 @@ class Position:
     scale: float = 0.0
     local: bool = False   # найдено локальным трекингом (а не глобальным поиском)
     margin: float = 1.0   # отрыв от второго кандидата (для глобального поиска)
+    water: bool = False   # найдено по форме воды (запасной способ)
 
     @property
     def reliable(self) -> bool:
@@ -107,8 +115,28 @@ def _fetch(url: str) -> bytes | None:
         return None
 
 
+def water_mask(bgr: np.ndarray) -> np.ndarray:
+    """Маска воды (0/255) по цвету: вода на карте и мини-карте — сине-бирюзовая."""
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    h, s, v = cv2.split(hsv)
+    m = ((h >= 85) & (h <= 115) & (s >= 60) & (v >= 60)).astype(np.uint8) * 255
+    return cv2.medianBlur(m, 5)
+
+
+def water_reference_path(meta: dict, assets_dir: Path) -> Path:
+    ver = str(meta.get("map_version", "v"))[:10]
+    return assets_dir / f"water_{ver}_z{abs(WATER_ZOOM)}.png"
+
+
+def ensure_water_reference(meta: dict, out_path: Path, progress=None) -> Path:
+    """Маска воды всей карты из цветных тайлов (один раз, дальше — кеш)."""
+    return ensure_reference(meta, out_path, WATER_ZOOM, progress,
+                            decode=lambda data: water_mask(
+                                cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)))
+
+
 def ensure_reference(meta: dict, out_path: Path, zoom: int = REF_ZOOM,
-                     progress=None) -> Path:
+                     progress=None, decode=None) -> Path:
     """Собрать серый референс карты из v2-тайлов (один раз, дальше — кеш).
 
     Качаются только тайлы, покрывающие реальный контент (padding + content_size).
@@ -143,7 +171,8 @@ def ensure_reference(meta: dict, out_path: Path, zoom: int = REF_ZOOM,
                 progress(done, len(jobs))
             if not data:
                 continue
-            tile = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_GRAYSCALE)
+            tile = decode(data) if decode else \
+                cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_GRAYSCALE)
             if tile is None:
                 continue
             py, px = (y - y0) * ts, (x - x0) * ts
@@ -185,7 +214,7 @@ class PositionTracker:
     """Позиция по мини-карте: кандидаты грубым поиском -> точная проверка -> трекинг."""
 
     def __init__(self, meta: dict, reference_path: Path, zoom: int = REF_ZOOM,
-                 scale: float | None = None) -> None:
+                 scale: float | None = None, water_path: Path | None = None) -> None:
         self.meta = meta
         zoom = max(zoom, int(meta.get("min_zoom", zoom)))
         self.ref_scale = 2.0 ** zoom                      # пиксель референса / пиксель холста
@@ -198,6 +227,17 @@ class PositionTracker:
         self.scale = scale                                # мир. единиц на px мини-карты @1080p
         self.last: Position | None = None
         self.last_t = 0.0
+        self.water = None
+        if water_path is not None and Path(water_path).exists():
+            self.set_water(Path(water_path))
+
+    def set_water(self, water_path: Path) -> None:
+        """Подключить маску воды карты (запасной поиск по форме береговой линии)."""
+        w = cv2.imread(str(water_path), cv2.IMREAD_GRAYSCALE)
+        if w is not None:
+            self.water_scale = 2.0 ** WATER_ZOOM
+            self.water_off = ref_offset(self.meta, WATER_ZOOM)
+            self.water = w
 
     # --- координаты ---
     def _ref_to_world(self, rx: float, ry: float, factor: float = 1.0) -> tuple[float, float]:
@@ -307,7 +347,76 @@ class PositionTracker:
         best.margin = best.score - other
         return best
 
-    def locate(self, minimap_gray: np.ndarray, screen_h: int = BASE_HEIGHT) -> Position | None:
+    # ---------- запасной поиск по форме воды ----------
+    def _water_template(self, minimap_bgr: np.ndarray, screen_h: int) -> np.ndarray | None:
+        sq = inner_square(minimap_bgr)
+        k = BASE_HEIGHT / max(1, screen_h)
+        if abs(k - 1.0) > 0.01:
+            sq = cv2.resize(sq, None, fx=k, fy=k, interpolation=cv2.INTER_AREA)
+        m = water_mask(sq)
+        frac = float(m.mean()) / 255.0
+        if not (WATER_FRAC[0] <= frac <= WATER_FRAC[1]):
+            return None                       # воды нет / одна вода — сравнивать нечего
+        return m
+
+    def _water_window(self, mask: np.ndarray, wx: float, wy: float,
+                      radius_units: float) -> Position | None:
+        """Трекинг по воде: поиск только в окне вокруг прошлой позиции (быстро)."""
+        best = None
+        cx = (wx + self.meta["origin"][0]) * self.water_scale - self.water_off[0]
+        cy = (wy + self.meta["origin"][1]) * self.water_scale - self.water_off[1]
+        for s in self._scales() or KNOWN_SCALES:
+            side = round(mask.shape[0] * s * self.water_scale)
+            if side < 12:
+                continue
+            t = cv2.resize(mask, (side, side), interpolation=cv2.INTER_AREA)
+            half = int(radius_units * self.water_scale) + side // 2 + 1
+            x0, y0 = max(0, int(cx - half)), max(0, int(cy - half))
+            win = self.water[y0:int(cy + half), x0:int(cx + half)]
+            if win.shape[0] <= side or win.shape[1] <= side:
+                continue
+            _, val, _, loc = cv2.minMaxLoc(cv2.matchTemplate(win, t, cv2.TM_CCOEFF_NORMED))
+            if best is None or val > best.score:
+                rx = x0 + loc[0] + side / 2 + self.water_off[0]
+                ry = y0 + loc[1] + side / 2 + self.water_off[1]
+                best = Position(round(rx / self.water_scale - self.meta["origin"][0], 1),
+                                round(ry / self.water_scale - self.meta["origin"][1], 1),
+                                float(val), s, local=True, water=True)
+        return best if best is not None and best.score >= WATER_OK else None
+
+    def locate_water(self, minimap_bgr: np.ndarray, screen_h: int) -> Position | None:
+        """Где на карте такая же береговая линия. Уверенное — только с отрывом."""
+        if self.water is None:
+            return None
+        mask = self._water_template(minimap_bgr, screen_h)
+        if mask is None:
+            return None
+        cands = []
+        for s in self._scales() or KNOWN_SCALES:
+            side = round(mask.shape[0] * s * self.water_scale)
+            if side < 12 or side >= min(self.water.shape[:2]):
+                continue
+            t = cv2.resize(mask, (side, side), interpolation=cv2.INTER_AREA)
+            res = cv2.matchTemplate(self.water, t, cv2.TM_CCOEFF_NORMED)
+            for val, loc in _peaks(res, 6, side // 2):
+                rx = loc[0] + side / 2 + self.water_off[0]
+                ry = loc[1] + side / 2 + self.water_off[1]
+                cands.append(Position(round(rx / self.water_scale - self.meta["origin"][0], 1),
+                                      round(ry / self.water_scale - self.meta["origin"][1], 1),
+                                      float(val), s, water=True))
+        if not cands:
+            return None
+        cands.sort(key=lambda p: p.score, reverse=True)
+        best = cands[0]
+        other = next((p.score for p in cands[1:]
+                      if math.hypot(p.x - best.x, p.y - best.y) > DISTINCT_WORLD), 0.0)
+        best.margin = best.score - other
+        if best.score < WATER_OK or best.margin < WATER_MARGIN:
+            best.margin = min(best.margin, MIN_MARGIN - 0.01)   # не надёжно
+        return best
+
+    def locate(self, minimap_gray: np.ndarray, screen_h: int = BASE_HEIGHT,
+               minimap_bgr: np.ndarray | None = None) -> Position | None:
         """Позиция игрока по кадру мини-карты (None — не удалось).
 
         Если игрок недавно был найден — сначала локальный поиск вокруг него
@@ -317,7 +426,13 @@ class PositionTracker:
         if sq.shape[0] < 16 or float(sq.std()) < 4.0:   # пустой/чёрный кадр (загрузка, меню)
             return None
         pos = None
-        if self.last and self.scale and time.monotonic() - self.last_t < 3.0:
+        # в неразведанных местах (прошлую позицию нашли по воде) — сначала вода рядом
+        if (minimap_bgr is not None and self.water is not None and self.last is not None
+                and self.last.water and time.monotonic() - self.last_t < 5.0):
+            mask = self._water_template(minimap_bgr, screen_h)
+            if mask is not None:
+                pos = self._water_window(mask, self.last.x, self.last.y, 150)
+        if pos is None and self.last and self.scale and time.monotonic() - self.last_t < 3.0:
             # локально: текущий масштаб, а если нет — другие известные (вошёл в город)
             for s in self._scales():
                 pos = self._search_window(sq, self.last.x, self.last.y, 60, (s,))
@@ -326,10 +441,16 @@ class PositionTracker:
                     break
                 pos = None
         if pos is None:
+            # порядок по цене: яркость на известных масштабах (с) -> форма воды (доли с)
+            # -> изредка широкий перебор масштабов (самое медленное)
             pos = self.locate_global(sq)
+            if (pos is None or not pos.reliable) and minimap_bgr is not None:
+                wpos = self.locate_water(minimap_bgr, screen_h)
+                if wpos is not None and wpos.reliable:
+                    pos = wpos
             if (pos is None or not pos.reliable) and self.scale:
                 self._global_fails = getattr(self, "_global_fails", 0) + 1
-                if self._global_fails % SWEEP_EVERY == 0:      # изредка — широкий перебор
+                if self._global_fails % SWEEP_EVERY == 0:
                     swept = self.locate_global(sq, sweep=True)
                     if swept is not None and (pos is None or swept.score > pos.score):
                         pos = swept
