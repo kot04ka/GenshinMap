@@ -1,0 +1,1504 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Genshin Interactive Map</title>
+  <link rel="stylesheet" href="vendor/leaflet.css" />
+  <style>
+    :root {
+      --bg:            #0d1117;
+      --bg-map:        #0a0e16;
+      --panel:         #121926;
+      --panel-2:       #0e1420;
+      --panel-hdr:     #161f30;
+      --line:          #223049;
+      --line-soft:     #1a2537;
+      --text:          #e6ecf6;
+      --text-dim:      #8ea1c2;
+      --text-mut:      #61728f;
+      --accent:        #58a6ff;
+      --accent-soft:   #1f6feb;
+      --accent-glow:   rgba(88,166,255,.35);
+      --good:          #3fb950;
+      --warn:          #d29922;
+      --panel-w:       300px;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden;
+      font: 13px/1.4 "Segoe UI", "Inter", system-ui, sans-serif; color: var(--text); }
+
+    #map { position: absolute; inset: 0 0 0 var(--panel-w); background: var(--bg-map); }
+    .leaflet-container { background: var(--bg-map); font-family: inherit; }
+    body.compact { --panel-w: 0px; }
+    body.compact #panel, body.compact #regions { display: none; }
+
+    /* ---------- Маркеры ---------- */
+    /* Иконки без дорогих фильтров/переходов — чтобы карта не лагала при панораме.
+       Тень нарисована прямо в PNG-иконках HoYoLAB, доп. filter не нужен. */
+    .gm-ico {
+      width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+      transform-origin: center bottom; will-change: transform;
+    }
+    .gm-ico img { width: 26px; height: 26px; object-fit: contain; pointer-events: none; }
+    .gm-ico:hover { transform: scale(1.35); z-index: 1000; }
+    /* заглушка, если иконка не загрузилась — нейтральный кружок, а не чужая иконка */
+    .gm-ico.gm-fallback {
+      background: radial-gradient(circle at 35% 30%, #9fb2d6, #4a5c7e);
+      border: 2px solid #dfe7f5; border-radius: 50%; width: 16px; height: 16px;
+    }
+    /* собранные — приглушены + галочка (grayscale только на собранных, их немного) */
+    .gm-ico.collected { opacity: .35; }
+    .gm-ico.collected img { filter: grayscale(1); }
+    .gm-ico.collected::after {
+      content: '✓'; position: absolute; right: -3px; bottom: -3px;
+      width: 13px; height: 13px; border-radius: 50%; background: var(--good);
+      color: #06210c; font-size: 10px; font-weight: 800; line-height: 13px;
+      text-align: center; box-shadow: 0 0 0 1.5px #06210c;
+    }
+
+    /* «вероятно собрано» (приложение не нашло объект на месте) — «?» янтарный */
+    .gm-ico.collected.probable { opacity: .6; }
+    .gm-ico.collected.probable img { filter: grayscale(.6); }
+    .gm-ico.collected.probable::after { content: '?'; background: var(--warn); color: #2a1a00; }
+
+    /* мини-режим: кнопки карты ниже кнопок окна (⤢ и ✥) */
+    /* Мини-режим: столбик кнопок Leaflet прячем — вместо него нижняя панель
+       с крупными кнопками; сверху оставляем место под полосу окна (Qt, 30px) */
+    body.compact .leaflet-top.leaflet-right { display: none; }
+    body.compact #map { top: 30px; }
+
+    #minibar { position: absolute; left: 0; right: 0; bottom: 0; z-index: 960; display: none;
+      gap: 6px; padding: 6px 8px; justify-content: center;
+      background: linear-gradient(0deg, rgba(10,14,22,.92), rgba(10,14,22,.6)); }
+    body.compact #minibar { display: flex; }
+    #minibar button { flex: 1 1 0; max-width: 64px; height: 38px; font-size: 18px; font-weight: 700;
+      color: var(--text); background: rgba(28,39,64,.95); border: 1px solid #2c3956;
+      border-radius: 9px; cursor: pointer; }
+    #minibar button:hover { border-color: var(--accent); background: #24345a; }
+    #minibar button.on { background: #1f3d2a; border-color: var(--good); color: #c9f5c0; }
+    #minibar button.off { opacity: .4; }
+    body.compact #nav { bottom: 56px; }
+
+    /* карточка в мини-режиме — панель снизу на всю ширину (не обрезается) */
+    #sheet { position: absolute; left: 0; right: 0; bottom: 0; z-index: 970; display: none;
+      max-height: 72%; overflow-y: auto; background: rgba(14,20,32,.98);
+      border-top: 1px solid var(--accent-soft); border-radius: 12px 12px 0 0;
+      padding: 10px 12px 12px; box-shadow: 0 -8px 24px rgba(0,0,0,.55); }
+    #sheet.on { display: block; }
+    #sheet .sheet-x { position: absolute; right: 8px; top: 6px; width: 34px; height: 34px;
+      border-radius: 8px; border: 1px solid #2c3956; background: #1c2740; color: var(--text);
+      font-size: 16px; cursor: pointer; }
+    #sheet .card-h { padding-right: 40px; }
+    #sheet .card-btns button { min-height: 38px; font-size: 13px; }
+
+    /* ---------- Карточка точки ---------- */
+    .gm-card .leaflet-popup-content-wrapper { background: rgba(14,20,32,.97); color: var(--text);
+      border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 26px rgba(0,0,0,.6); }
+    .gm-card .leaflet-popup-tip { background: rgba(14,20,32,.97); border: 1px solid var(--line); }
+    .gm-card .leaflet-popup-content { margin: 10px 12px; width: 280px !important; }
+    .gm-card a.leaflet-popup-close-button { color: var(--text-mut); }
+    .card-h { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13.5px; }
+    .card-h img { width: 26px; height: 26px; object-fit: contain; }
+    .card-sub { color: var(--text-mut); font-size: 11.5px; margin: 2px 0 6px; }
+    .card-st { font-size: 12px; margin-bottom: 6px; }
+    .card-st.ok { color: var(--good); } .card-st.prob { color: var(--warn); }
+    .card-txt { font-size: 12.5px; line-height: 1.45; margin: 6px 0; white-space: pre-wrap; }
+    .card-img { width: 100%; border-radius: 6px; border: 1px solid var(--line); cursor: zoom-in;
+      display: block; margin: 6px 0; min-height: 60px; background: #0a0e16; }
+    .card-muted { color: var(--text-mut); font-size: 11.5px; font-style: italic; }
+    .tip { display: flex; gap: 10px; align-items: flex-start; margin: 6px 0;
+      padding: 8px; background: rgba(255,255,255,.03); border: 1px solid var(--line-soft); border-radius: 8px; }
+    .tip .card-txt { flex: 1; margin: 0; }
+    .tip-thumb { width: 88px; height: 88px; object-fit: cover; flex: none; border-radius: 6px;
+      border: 1px solid var(--line); cursor: zoom-in; background: #0a0e16; }
+    .tips-h { margin: 10px 0 4px; font-size: 11px; font-weight: 700; letter-spacing: .4px;
+      text-transform: uppercase; color: var(--text-dim); }
+    .tips-h span { font-weight: 500; text-transform: none; color: var(--text-mut); margin-left: 4px; }
+    .tips-sum { font-size: 12px; color: var(--text-dim); font-style: italic; margin-bottom: 4px; }
+    .tip-meta { margin-top: 4px; font-size: 11px; color: var(--text-mut); }
+    .gm-card .leaflet-popup-content { max-height: 420px; overflow-y: auto; }
+    #sheet { left: var(--panel-w); }
+    .clr-h { font-weight: 700; font-size: 14px; margin: 2px 40px 8px 0; }
+    .clr-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 13px; }
+    .clr-row .k { width: 22px; text-align: center; }
+    .clr-row .n { flex: 1; }
+    .clr-row .v { font-variant-numeric: tabular-nums; color: var(--text-dim); }
+    .clr-bar { height: 4px; background: rgba(255,255,255,.07); border-radius: 3px; overflow: hidden; margin: -2px 0 4px 30px; }
+    .clr-bar i { display: block; height: 100%; background: var(--good); }
+    .clr-near { margin-top: 8px; }
+    .clr-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px;
+      cursor: pointer; border: 1px solid transparent; font-size: 12.5px; min-height: 36px; }
+    .clr-item:hover { background: rgba(88,166,255,.08); border-color: var(--line); }
+    .clr-item img { width: 22px; height: 22px; object-fit: contain; }
+    .clr-item .d { margin-left: auto; color: var(--text-mut); font-variant-numeric: tabular-nums; }
+    #lightbox { position: fixed; inset: 0; z-index: 3000; display: none; align-items: center;
+      justify-content: center; background: rgba(0,0,0,.88); cursor: zoom-out; padding: 10px; }
+    #lightbox.on { display: flex; }
+    #lightbox img { max-width: 100%; max-height: 100%; border-radius: 8px; box-shadow: 0 10px 40px #000; }
+    .card-btns { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+    .card-btns button { flex: 1 1 auto; font: inherit; font-size: 12.5px; font-weight: 600;
+      padding: 8px 10px; min-height: 34px; border-radius: 8px; cursor: pointer; color: var(--text);
+      background: #1c2740; border: 1px solid #2c3956; }
+    .card-btns button:hover { border-color: var(--accent); background: #24345a; }
+    .card-btns button.primary { background: #1f3d2a; border-color: var(--good); color: #c9f5c0; }
+
+    #lost { position: absolute; top: 54px; left: calc(var(--panel-w) + 12px); right: 60px; z-index: 950;
+      display: none; background: rgba(58,42,8,.93); border: 1px solid var(--warn); color: #ffe7b0;
+      border-radius: 10px; padding: 7px 12px; font-size: 12px; line-height: 1.4; }
+    #lost.on { display: block; }
+    body.compact #lost { top: 6px; left: 8px; right: 8px; font-size: 11px; }
+
+    /* ---------- Навигация к цели ---------- */
+    #nav { position: absolute; left: calc(var(--panel-w) + 50%); transform: translateX(-50%);
+      bottom: 16px; z-index: 950; display: none; align-items: center; gap: 10px;
+      background: rgba(14,20,32,.95); border: 1px solid var(--accent-soft); border-radius: 999px;
+      padding: 6px 8px 6px 14px; font-size: 12.5px; box-shadow: 0 6px 20px rgba(0,0,0,.5); }
+    #nav.on { display: flex; }
+    #nav.here { border-color: var(--good); }
+    #nav .arrow { display: inline-block; font-size: 16px; color: var(--accent); }
+    #nav button { background: none; border: none; color: var(--text-mut); cursor: pointer; font-size: 14px; }
+    #nav button:hover { color: #ff9aa5; }
+    body.compact #nav { left: 50%; bottom: 8px; font-size: 11.5px; }
+    .gm-nav-line { stroke-dasharray: 8 8; animation: dash 1s linear infinite; }
+    @keyframes dash { to { stroke-dashoffset: -16; } }
+
+    /* подсветка точки (авто-отметка / переход из журнала) */
+    .gm-pulse {
+      width: 44px; height: 44px; border-radius: 50%; border: 3px solid var(--good);
+      box-shadow: 0 0 18px var(--good); animation: pulse 1.1s ease-out 3; opacity: 0;
+    }
+    @keyframes pulse { 0% { transform: scale(.4); opacity: 1; } 100% { transform: scale(1.6); opacity: 0; } }
+
+    /* игрок */
+    .gm-player { width: 22px; height: 22px; position: relative; }
+    .gm-player .dot { position: absolute; inset: 5px; border-radius: 50%; background: #ffd24a;
+      border: 2px solid #3a2a00; box-shadow: 0 0 10px rgba(255,210,74,.9); }
+    .gm-player .ring { position: absolute; inset: -8px; border-radius: 50%;
+      border: 2px solid rgba(255,210,74,.55); animation: pulse 1.8s ease-out infinite; }
+    .gm-player.weak .dot { background: #8a7a4a; box-shadow: none; }
+    .gm-player.weak .ring { display: none; }
+
+    /* подписи регионов на отдалении */
+    .gm-region-lbl {
+      color: #f3f6fc; font-weight: 700; font-size: 14px; letter-spacing: 1.5px;
+      text-transform: uppercase; white-space: nowrap; transform: translate(-50%, -50%);
+      text-shadow: 0 1px 3px #000; cursor: pointer; width: max-content;
+      background: rgba(10,14,22,.72); border: 1px solid rgba(88,166,255,.25);
+      border-radius: 8px; padding: 3px 10px 4px; box-shadow: 0 3px 12px rgba(0,0,0,.45);
+    }
+    .gm-region-lbl:hover { color: var(--accent); }
+    .gm-region-lbl small { display: block; text-align: center; font-size: 10.5px;
+      letter-spacing: .3px; text-transform: none; color: #b9c6df; font-weight: 600; }
+    .hide-region-labels .gm-region-lbl { display: none; }
+
+    /* тёмные тултипы */
+    .leaflet-tooltip.gm-tip {
+      background: rgba(14,20,32,.96); color: var(--text); border: 1px solid var(--line);
+      border-radius: 6px; padding: 4px 8px; font-size: 12px; font-weight: 500;
+      box-shadow: 0 4px 14px rgba(0,0,0,.5); backdrop-filter: blur(2px);
+    }
+    .leaflet-tooltip.gm-tip::before { display: none; }
+    .gm-tip .sub { color: var(--text-mut); font-size: 11px; }
+
+    /* контролы справа */
+    .leaflet-control-zoom, .gm-ctl { border: none !important; box-shadow: 0 4px 14px rgba(0,0,0,.5) !important; }
+    .leaflet-control-zoom a, .gm-ctl a {
+      background: var(--panel) !important; color: var(--text) !important;
+      border: 1px solid var(--line) !important; width: 32px; height: 32px; line-height: 30px;
+      font-size: 18px; transition: background .12s, color .12s; display: block;
+      text-align: center; text-decoration: none; cursor: pointer;
+    }
+    .leaflet-control-zoom a:hover, .gm-ctl a:hover { background: var(--accent-soft) !important; color: #fff !important; }
+    .leaflet-control-zoom a:first-child, .gm-ctl a:first-child { border-radius: 8px 8px 0 0 !important; }
+    .leaflet-control-zoom a:last-child, .gm-ctl a:last-child { border-radius: 0 0 8px 8px !important; }
+    .gm-ctl a { font-size: 15px; }
+    .gm-ctl a.on { background: #2b4f1f !important; border-color: var(--good) !important; color: #c9f5c0 !important; }
+    .gm-ctl a.off { opacity: .45; cursor: default; }
+
+    /* ---------- Регионы (над картой) ---------- */
+    #regions {
+      position: absolute; top: 10px; left: calc(var(--panel-w) + 12px); right: 60px; z-index: 900;
+      display: flex; gap: 6px; flex-wrap: wrap; pointer-events: none;
+    }
+    #regions:empty { display: none; }
+    .rg {
+      pointer-events: auto; cursor: pointer; user-select: none;
+      background: rgba(18,25,38,.92); border: 1px solid var(--line); color: var(--text-dim);
+      padding: 5px 11px; border-radius: 999px; font-size: 12px; font-weight: 600;
+      box-shadow: 0 3px 10px rgba(0,0,0,.4); transition: background .12s, color .12s, border-color .12s;
+    }
+    .rg:hover { color: var(--text); border-color: var(--accent-soft); }
+    .rg.active { background: var(--accent-soft); border-color: var(--accent); color: #fff; }
+    .rg .pc { margin-left: 6px; font-weight: 500; opacity: .75; font-size: 11px; }
+
+    /* ---------- Левая панель ---------- */
+    #panel {
+      position: absolute; top: 0; left: 0; bottom: 0; width: var(--panel-w); z-index: 1000;
+      background: linear-gradient(180deg, var(--panel), var(--panel-2));
+      display: flex; flex-direction: column; border-right: 1px solid var(--line);
+      box-shadow: 4px 0 22px rgba(0,0,0,.35);
+    }
+    #panel h1 {
+      font-size: 14px; font-weight: 700; margin: 0; padding: 13px 16px; letter-spacing: .2px;
+      background: var(--panel-hdr); border-bottom: 1px solid var(--line);
+      display: flex; align-items: center; gap: 9px;
+    }
+    #panel h1 #mapname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #panel h1 .badge {
+      margin-left: auto; flex: none; font-size: 11px; font-weight: 600; color: var(--accent);
+      background: rgba(88,166,255,.12); border: 1px solid rgba(88,166,255,.25);
+      padding: 2px 8px; border-radius: 999px;
+    }
+
+    .search-wrap { position: relative; padding: 12px 14px 6px; }
+    .search-wrap svg { position: absolute; left: 26px; top: 50%; transform: translateY(-38%);
+      width: 15px; height: 15px; fill: var(--text-mut); pointer-events: none; }
+    #search {
+      width: 100%; padding: 9px 10px 9px 34px; color: var(--text);
+      background: var(--panel-2); border: 1px solid var(--line); border-radius: 9px;
+      font: inherit; outline: none; transition: border-color .15s, box-shadow .15s;
+    }
+    #search::placeholder { color: var(--text-mut); }
+    #search:focus { border-color: var(--accent-soft); box-shadow: 0 0 0 3px var(--accent-glow); }
+
+    .tools { display: flex; gap: 6px; padding: 4px 14px 10px; }
+    .tbtn {
+      flex: 1; padding: 6px 8px; font: inherit; font-size: 11.5px; font-weight: 600;
+      color: var(--text-dim); background: var(--panel-2); border: 1px solid var(--line);
+      border-radius: 7px; cursor: pointer; transition: background .12s, color .12s, border-color .12s;
+    }
+    .tbtn:hover { color: var(--text); border-color: var(--accent-soft); }
+    .tbtn.on { color: #c9f5c0; border-color: var(--good); background: rgba(63,185,80,.12); }
+
+    /* включённые слои — быстрый доступ */
+    #active { padding: 0 14px 8px; display: flex; flex-wrap: wrap; gap: 5px; }
+    #active:empty { display: none; }
+    .chip {
+      display: inline-flex; align-items: center; gap: 5px; max-width: 100%;
+      background: rgba(31,111,235,.16); border: 1px solid rgba(88,166,255,.3);
+      border-radius: 999px; padding: 2px 4px 2px 3px; font-size: 11.5px; cursor: pointer;
+    }
+    .chip img { width: 16px; height: 16px; object-fit: contain; }
+    .chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 150px; }
+    .chip b { color: var(--text-mut); font-weight: 700; padding: 0 4px; }
+    .chip:hover b { color: #ff9aa5; }
+
+    #cats { flex: 1; overflow-y: auto; padding-bottom: 6px; border-top: 1px solid var(--line-soft); }
+
+    .grp { border-top: 1px solid var(--line-soft); }
+    .grp:first-child { border-top: none; }
+    .grp-h {
+      display: flex; align-items: center; gap: 8px; padding: 9px 12px 9px 14px; cursor: pointer;
+      font-weight: 600; font-size: 12.5px; color: var(--text-dim); user-select: none;
+      transition: color .12s, background .12s;
+    }
+    .grp-h:hover { color: var(--text); background: rgba(255,255,255,.03); }
+    .grp-h .chev { width: 9px; height: 9px; transition: transform .22s ease; fill: var(--text-mut); flex: none; }
+    .grp.open .grp-h .chev { transform: rotate(90deg); }
+    .grp-h .g-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .grp-h .g-cnt { font-size: 10.5px; color: var(--text-mut); font-weight: 500;
+      font-variant-numeric: tabular-nums; }
+
+    .grp-body { display: none; }
+    .grp.open .grp-body { display: block; }
+
+    .lbl {
+      display: flex; align-items: center; gap: 9px; padding: 5px 12px 5px 28px; cursor: pointer;
+      transition: background .1s; border-left: 2px solid transparent; position: relative;
+    }
+    .lbl:hover { background: rgba(88,166,255,.07); border-left-color: var(--accent-soft); }
+    .lbl.on { background: rgba(31,111,235,.08); }
+    .lbl img { width: 22px; height: 22px; object-fit: contain; flex: none; }
+    .lbl img.ico-missing { background: radial-gradient(circle at 35% 30%, #9fb2d6, #4a5c7e);
+      border-radius: 50%; }
+    .lbl .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+    .lbl .cnt { color: var(--text-mut); font-size: 11px; font-variant-numeric: tabular-nums; }
+    .lbl .cnt.done { color: var(--good); }
+    .lbl .bar { position: absolute; left: 59px; right: 12px; bottom: 1px; height: 2px;
+      background: rgba(255,255,255,.05); border-radius: 2px; overflow: hidden; }
+    .lbl .bar i { display: block; height: 100%; background: var(--good); width: 0; }
+
+    /* чекбоксы (и у категорий, и у групп) */
+    .cb { appearance: none; width: 16px; height: 16px; flex: none; cursor: pointer; margin: 0;
+      border: 1.5px solid var(--line); border-radius: 5px; background: var(--panel-2);
+      position: relative; transition: background .12s, border-color .12s; }
+    .cb:hover { border-color: var(--accent-soft); }
+    .cb:checked, .cb:indeterminate { background: var(--accent-soft); border-color: var(--accent-soft); }
+    .cb:checked::after { content: '✓'; position: absolute; inset: 0; color: #fff;
+      font-size: 11px; font-weight: 800; text-align: center; line-height: 13px; }
+    .cb:indeterminate::after { content: ''; position: absolute; left: 3px; right: 3px; top: 6px;
+      height: 2px; background: #fff; border-radius: 1px; }
+
+    #stat {
+      padding: 8px 16px; color: var(--text-dim); font-size: 11px; line-height: 1.55;
+      background: var(--panel-hdr); border-top: 1px solid var(--line);
+    }
+    #stat b { color: var(--accent); font-weight: 700; }
+    #stat .warn { color: var(--warn); }
+
+    /* скроллбары */
+    #cats::-webkit-scrollbar { width: 9px; }
+    #cats::-webkit-scrollbar-thumb { background: #2a3a56; border-radius: 6px; border: 2px solid transparent;
+      background-clip: padding-box; }
+    #cats::-webkit-scrollbar-thumb:hover { background: #38517a; background-clip: padding-box; }
+    #cats::-webkit-scrollbar-track { background: transparent; }
+
+    /* оверлей загрузки */
+    #loading {
+      position: absolute; inset: 0 0 0 var(--panel-w); z-index: 1500; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 16px; background: var(--bg-map);
+      color: var(--text-dim); transition: opacity .4s ease;
+    }
+    #loading.hidden { opacity: 0; pointer-events: none; }
+    .spinner { width: 42px; height: 42px; border-radius: 50%;
+      border: 3px solid rgba(88,166,255,.18); border-top-color: var(--accent);
+      animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div id="panel">
+    <h1><span id="mapname">Карта</span><span class="badge" id="badge">—</span></h1>
+    <div class="search-wrap">
+      <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 5 1.5-1.5-5-5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
+      <input id="search" placeholder="Поиск категории…" />
+    </div>
+    <div class="tools">
+      <button class="tbtn" id="btn-hide" title="Не показывать на карте уже собранные точки">Скрыть собранные</button>
+      <button class="tbtn" id="btn-clear" title="Выключить все категории">Снять все слои</button>
+    </div>
+    <div id="active"></div>
+    <div id="cats"></div>
+    <div id="stat">Загрузка…</div>
+  </div>
+  <div id="map"></div>
+  <div id="regions"></div>
+  <div id="minibar">
+    <button id="mb-out" title="Отдалить">−</button>
+    <button id="mb-in" title="Приблизить">+</button>
+    <button id="mb-follow" class="off" title="Следовать за игроком">◎</button>
+    <button id="mb-chest" class="off" title="Вести к ближайшему сундуку">🧰</button>
+    <button id="mb-clear" title="Зачистка региона: что осталось">🧹</button>
+    <button id="mb-route" title="Маршрут по несобранным сундукам региона">🗺</button>
+    <button id="mb-home" title="Вся карта">⌂</button>
+  </div>
+  <div id="lightbox" title="Закрыть"><img alt=""></div>
+  <div id="sheet"><button class="sheet-x" title="Закрыть">✕</button><div id="sheet-body"></div></div>
+  <div id="lost" title="Позиция вернётся сама, когда мини-карта снова совпадёт с картой">📍 Позиция не найдена: подземелье или многоуровневая зона (такого уровня нет на карте HoYoLAB), меню или загрузка. Точка — последнее известное место.</div>
+  <div id="nav"><span class="arrow">➤</span><span id="nav-txt"></span>
+    <button id="nav-x" title="Перестать вести">✕</button></div>
+  <div id="loading"><div class="spinner"></div><div>Загрузка карты…</div></div>
+
+  <script src="vendor/leaflet.js"></script>
+  <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+  <script>
+    let META, LABELS = [], POINTS_BY_LABEL = {}, REGIONS = [], COLLECTED = new Set();
+    let PROBABLE = new Set();     // подмножество COLLECTED: «вероятно собрано»
+    const labelById = {};
+    const regionById = {};
+    const pointInfo = new Map();  // pid -> [x, y, labelId, area] (для перехода к точке)
+    const enabled = new Set();    // включённые label_id
+    const markerByPoint = {};     // pid -> {marker,labelId,x,y} (только видимые)
+    const rowByLabel = {};        // label_id -> {row, cb, cnt, bar, group}
+    const groupEls = {};          // имя группы -> {el, cb, cnt, labels:[id]}
+    const markerLayer = L.layerGroup();
+    const regionLayer = L.layerGroup();
+    let bridge = null, map = null;
+    let hideCollected = false;
+    let activeRegion = null;      // area_id или null (весь мир)
+    let follow = false;           // карта следует за игроком
+    let playerMarker = null, lastPlayer = null, followBtn = null, meBtn = null;
+    let CONTENT_BOUNDS = null;
+    let lastRenderInfo = { shown: 0, inView: 0, thinned: false };
+
+    // Порядок групп в панели: сначала навигация и сокровища, в конце противники/метки.
+    const GROUP_ORDER = ['Телепорт', 'Сокровища', 'Сокровища с загадкой', 'Опыт', 'Ценные предметы',
+      'Местная диковинка', 'Инвентарь / ресурсы', 'Руда', 'Древесина', 'Животные', 'Рыбалка',
+      'Противники', 'Метки'];
+
+    // --- координаты: игровые (x,y) -> пиксель картинки -> latLng Leaflet ---
+    function toLatLng(x, y) {
+      return [-(META.origin[1] + y), META.origin[0] + x];   // ось Y вниз
+    }
+    function bboxToBounds(b) {  // [x0,y0,x1,y1] в мировых -> LatLngBounds
+      return L.latLngBounds(toLatLng(b[0], b[1]), toLatLng(b[2], b[3]));
+    }
+
+    function initMap() {
+      const W = META.total_size[0], H = META.total_size[1];
+      const pad = META.padding || [0, 0];
+      const cs = META.content_size || META.total_size;
+      // Реальная картинка — только часть холста; по ней и центрируем, и ограничиваем.
+      CONTENT_BOUNDS = L.latLngBounds([-pad[1], pad[0]], [-(pad[1] + cs[1]), pad[0] + cs[0]]);
+
+      map = L.map('map', { crs: L.CRS.Simple, minZoom: -8, maxZoom: 2,
+                           zoomSnap: 0.25, zoomDelta: 0.5, wheelPxPerZoomLevel: 90,
+                           zoomControl: false, attributionControl: false,
+                           maxBounds: CONTENT_BOUNDS.pad(0.25), maxBoundsViscosity: 0.85,
+                           zoomAnimation: true, markerZoomAnimation: false });
+      L.control.zoom({ position: 'topright', zoomInTitle: 'Приблизить', zoomOutTitle: 'Отдалить' }).addTo(map);
+      addViewControls();
+
+      // Нативный тайл-слой HoYoLAB v2: Leaflet сам грузит только видимые тайлы
+      // по зумам (быстро, все регионы). bounds = контент -> нет 404 за краями.
+      const V2Layer = L.TileLayer.extend({
+        getTileUrl: function (c) {
+          const Z = (c.z < 0 ? 'N' : 'P') + Math.abs(c.z);
+          return META.tile_url.replace('{x}', c.x).replace('{y}', c.y).replace('{Z}', Z);
+        },
+      });
+      new V2Layer('', {
+        tileSize: META.tile_size || 256, minZoom: -8, maxZoom: 2,
+        minNativeZoom: META.min_zoom, maxNativeZoom: META.max_zoom,
+        noWrap: true, bounds: CONTENT_BOUNDS, keepBuffer: 3,
+      }).addTo(map);
+
+      map.fitBounds(CONTENT_BOUNDS);
+      // дальше, чем «вся карта целиком», отдалять смысла нет
+      map.setMinZoom(Math.floor(map.getBoundsZoom(CONTENT_BOUNDS) * 4) / 4 - 0.5);
+
+      // подписи регионов — отдельная панель ПОВЕРХ иконок (иначе их не прочесть)
+      map.createPane('regionPane').style.zIndex = 650;
+      markerLayer.addTo(map);
+      regionLayer.addTo(map);
+      buildRegionLabels();
+      map.on('zoomend', updateRegionLabels);
+      map.on('click', () => document.getElementById('sheet').classList.remove('on'));
+      map.on('contextmenu', e => {
+        const x = e.latlng.lng - META.origin[0], y = -e.latlng.lat - META.origin[1];
+        L.popup({ className: 'gm-card', maxWidth: 240 }).setLatLng(e.latlng)
+          .setContent(`<div class="card-btns"><button class="primary" onclick="addCustomHere(${x.toFixed(1)}, ${y.toFixed(1)})">⭐ Своя точка здесь</button></div>` +
+                      '<div class="card-muted">Сундук или что-то ещё, чего нет на карте</div>')
+          .openOn(map);
+      });
+      map.on('dragstart', () => {                      // пользователь сам двигает карту
+        setFollow(false);
+        if (document.body.classList.contains('compact')) scheduleFollowResume();
+      });
+      map.on('moveend zoomend', debounce(function () { renderVisible(); reportState(); }, 100));
+      updateRegionLabels();
+    }
+
+    function addViewControls() {
+      const Ctl = L.Control.extend({
+        onAdd: function () {
+          const box = L.DomUtil.create('div', 'leaflet-bar gm-ctl');
+          const home = L.DomUtil.create('a', '', box);
+          home.innerHTML = '⌂'; home.title = 'Вся карта';
+          home.onclick = () => { selectRegion(null); };
+          meBtn = L.DomUtil.create('a', 'off', box);
+          meBtn.innerHTML = '⌖'; meBtn.title = 'Показать игрока (нужно отслеживание позиции)';
+          meBtn.onclick = () => { if (lastPlayer) map.setView(toLatLng(lastPlayer.x, lastPlayer.y), Math.max(map.getZoom(), 0)); };
+          followBtn = L.DomUtil.create('a', 'off', box);
+          followBtn.innerHTML = '◎'; followBtn.title = 'Следовать за игроком';
+          followBtn.onclick = () => { if (lastPlayer) setFollow(!follow); };
+          nearBtn = L.DomUtil.create('a', 'off', box);
+          nearBtn.innerHTML = '🧰'; nearBtn.title = 'Вести к ближайшему несобранному сундуку';
+          nearBtn.onclick = navNearestChest;
+          const routeBtn = L.DomUtil.create('a', '', box);
+          routeBtn.innerHTML = '🗺'; routeBtn.title = 'Маршрут по несобранным сундукам региона';
+          routeBtn.onclick = () => (route ? clearTarget() : startRoute());
+          const clearBtn = L.DomUtil.create('a', '', box);
+          clearBtn.innerHTML = '🧹'; clearBtn.title = 'Зачистка региона: что осталось';
+          clearBtn.onclick = () => toggleClear();
+          L.DomEvent.disableClickPropagation(box);
+          return box;
+        },
+      });
+      new Ctl({ position: 'topright' }).addTo(map);
+    }
+
+    // ---------- Регионы ----------
+    function buildRegions() {
+      const box = document.getElementById('regions');
+      box.innerHTML = '';
+      if (!REGIONS.length) return;
+      const all = document.createElement('div');
+      all.className = 'rg'; all.dataset.id = ''; all.textContent = 'Весь мир';
+      all.onclick = () => selectRegion(null);
+      box.appendChild(all);
+      REGIONS.forEach(r => {
+        const el = document.createElement('div');
+        el.className = 'rg'; el.dataset.id = r.id;
+        el.innerHTML = `${r.name}<span class="pc"></span>`;
+        el.title = 'Показать регион (повторный клик — только перелёт)';
+        el.onclick = () => selectRegion(r.id);
+        box.appendChild(el);
+      });
+      highlightRegionChip();
+    }
+
+    function buildRegionLabels() {
+      regionLayer.clearLayers();
+      REGIONS.forEach(r => {
+        const b = r.bbox;
+        const c = toLatLng((b[0] + b[2]) / 2, (b[1] + b[3]) / 2);
+        const m = L.marker(c, {
+          icon: L.divIcon({ className: '', iconSize: [0, 0],
+            html: `<div class="gm-region-lbl" data-rid="${r.id}">${r.name}<small></small></div>` }),
+          keyboard: false, pane: 'regionPane',
+        });
+        m.on('click', () => selectRegion(r.id));
+        m.addTo(regionLayer);
+      });
+    }
+
+    function updateRegionLabels() {
+      if (!map) return;
+      // подписи нужны только на отдалении, когда виден весь мир
+      const far = map.getZoom() <= map.getMinZoom() + 1.25;
+      document.getElementById('map').classList.toggle('hide-region-labels', !far);
+    }
+
+    function selectRegion(id, opts) {
+      id = (id === null || id === undefined || id === '') ? null : Number(id);
+      activeRegion = (id !== null && regionById[id]) ? id : null;
+      highlightRegionChip();
+      if (!(opts && opts.noFly)) {
+        const target = activeRegion !== null ? bboxToBounds(regionById[activeRegion].bbox) : CONTENT_BOUNDS;
+        setFollow(false);
+        map.flyToBounds(target, { padding: activeRegion !== null ? [30, 30] : [0, 0], duration: 0.6 });
+      }
+      refreshCounts();
+      renderVisible();
+      reportState();
+    }
+
+    function highlightRegionChip() {
+      document.querySelectorAll('#regions .rg').forEach(el => {
+        const id = el.dataset.id === '' ? null : Number(el.dataset.id);
+        el.classList.toggle('active', id === activeRegion);
+      });
+    }
+
+    function inRegion(pt) { return activeRegion === null || pt[3] === activeRegion; }
+
+    // ---------- Маркеры ----------
+    function makeIcon(labelId, collected, probable) {
+      const url = iconUrl(labelId);
+      const onerr = "this.style.display='none';this.parentNode.classList.add('gm-fallback')";
+      return L.divIcon({
+        className: '',
+        html: `<div class="gm-ico${collected ? ' collected' : ''}${probable ? ' probable' : ''}">` +
+              `<img src="${url}" onerror="${onerr}"></div>`,
+        iconSize: [30, 30], iconAnchor: [15, 15],
+      });
+    }
+
+    // Рендерим ТОЛЬКО иконки видимой области (viewport culling), инкрементально
+    // добавляя/убирая по краям — DOM-элементов мало, панорама плавная.
+    let MAX_MARKERS = 1200;   // лимит одновременно показанных иконок (настраивается)
+    const CELL_PX = 38;       // размер ячейки прореживания (иконка + зазор)
+
+    function tipText(labelId, collected, area, probable) {
+      const lbl = labelById[labelId];
+      const rg = regionById[area];
+      const mark = probable ? ' ?' : (collected ? ' ✓' : '');
+      return `${lbl ? lbl.name : ''}${mark}` +
+             (probable ? '<div class="sub">вероятно собрано (не найдено на месте) — клик: подтвердить</div>' : '') +
+             (rg ? `<div class="sub">${rg.name}</div>` : '');
+    }
+
+    function addMarker(pid, x, y, labelId, area) {
+      const collected = COLLECTED.has(pid), probable = PROBABLE.has(pid);
+      const m = L.marker(toLatLng(x, y), { icon: makeIcon(labelId, collected, probable) });
+      m.bindTooltip(tipText(labelId, collected, area, probable),
+                    { className: 'gm-tip', direction: 'top', offset: [0, -10] });
+      m.on('click', () => openCard(pid));
+      m.on('contextmenu', () => { if (bridge) bridge.on_marker_clicked(pid); });   // быстрая отметка
+      m.addTo(markerLayer);
+      markerByPoint[pid] = { marker: m, labelId, x, y, area };
+    }
+
+    function renderVisible() {
+      if (!map) return;
+      const b = map.getBounds().pad(0.15);
+      const N = b.getNorth(), S = b.getSouth(), E = b.getEast(), Wb = b.getWest();
+      const ox = META.origin[0], oy = META.origin[1];
+
+      // 1) все точки включённых слоёв в кадре (несобранные — в приоритете)
+      const fresh = [], done = [];
+      for (const labelId of enabled) {
+        const pts = POINTS_BY_LABEL[labelId] || [];
+        for (let i = 0; i < pts.length; i++) {
+          const p = pts[i];
+          const lat = -(oy + p[2]), lng = ox + p[1];
+          if (lat > N || lat < S || lng < Wb || lng > E || !inRegion(p)) continue;
+          const pid = String(p[0]);
+          if (COLLECTED.has(pid)) { if (!hideCollected) done.push([pid, p, labelId, lat, lng]); }
+          else fresh.push([pid, p, labelId, lat, lng]);
+        }
+      }
+      const all = fresh.concat(done);
+
+      // 2) если точек больше лимита — прореживаем РАВНОМЕРНО по сетке экрана,
+      //    а не «первые N по списку» (иначе на отдалении иконки только в одном углу)
+      let chosen = all, thinned = false;
+      if (all.length > MAX_MARKERS) {
+        thinned = true;
+        const cell = CELL_PX / Math.pow(2, map.getZoom());   // размер ячейки в пикселях карты
+        chosen = thin(all, cell, true);                      // по ячейке + категории
+        if (chosen.length > MAX_MARKERS) chosen = thin(all, cell, false);
+        if (chosen.length > MAX_MARKERS) chosen = thin(all, cell * 2, false);
+        if (chosen.length > MAX_MARKERS) chosen = chosen.slice(0, MAX_MARKERS);
+      }
+
+      const need = new Set();
+      for (const [pid, p, labelId] of chosen) {
+        need.add(pid);
+        if (!markerByPoint[pid]) addMarker(pid, p[1], p[2], labelId, p[3]);
+      }
+      for (const pid in markerByPoint) {
+        if (!need.has(pid)) {
+          markerLayer.removeLayer(markerByPoint[pid].marker);
+          delete markerByPoint[pid];
+        }
+      }
+      lastRenderInfo = { shown: chosen.length, inView: all.length, thinned };
+      updateStat();
+    }
+
+    function thin(list, cell, perLabel) {
+      const seen = new Set(), out = [];
+      for (const it of list) {
+        const key = Math.floor(it[4] / cell) + ':' + Math.floor(it[3] / cell) + (perLabel ? ':' + it[2] : '');
+        if (seen.has(key)) continue;
+        seen.add(key); out.push(it);
+      }
+      return out;
+    }
+
+    function debounce(fn, ms) {
+      let t; return function () { clearTimeout(t); t = setTimeout(fn, ms); };
+    }
+
+    // ---------- Игрок (позиция по мини-карте) ----------
+    function setPlayer(x, y, score, weak) {
+      lastPlayer = { x, y, score };
+      const ll = toLatLng(x, y);
+      if (!playerMarker) {
+        playerMarker = L.marker(ll, {
+          icon: L.divIcon({ className: '', iconSize: [22, 22], iconAnchor: [11, 11],
+                            html: '<div class="gm-player"><div class="ring"></div><div class="dot"></div></div>' }),
+          interactive: false, zIndexOffset: 5000, keyboard: false,
+        }).addTo(map);
+      } else {
+        playerMarker.setLatLng(ll);
+      }
+      const el = playerMarker.getElement();
+      if (el) el.querySelector('.gm-player').classList.toggle('weak', !!weak);
+      meBtn.classList.remove('off'); followBtn.classList.remove('off'); nearBtn.classList.remove('off');
+      refreshClearSoon();
+      document.getElementById('mb-follow').classList.remove('off');
+      document.getElementById('mb-chest').classList.remove('off');
+      updateNav();
+      if (follow) map.panTo(ll, { animate: true, duration: 0.4 });
+      else if (followWanted && !followTimer) setFollow(true);   // первая позиция в мини-режиме
+    }
+
+    // ---------- Карточка точки: фото, «как найти», действия ----------
+    let cardPopup = null, cardPid = null;
+    const cardInfo = {};          // pid -> данные HoYoLAB (кеш на странице)
+
+    function esc(t) { return String(t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+    function openCard(pid) {
+      pid = String(pid);
+      const info = pointInfo.get(pid);
+      if (!info) return;
+      if (isCustom(pid)) cardInfo[pid] = { custom: true };     // подсказок HoYoLAB у своих нет
+      cardPid = pid;
+      clearOpen = false;
+      if (document.body.classList.contains('compact')) {
+        // маленькое окно: всплывашка не влезает — панель снизу на всю ширину
+        document.getElementById('sheet-body').innerHTML = cardHtml(pid);
+        document.getElementById('sheet').classList.add('on');
+      } else {
+        if (!cardPopup) cardPopup = L.popup({ className: 'gm-card', maxWidth: 310, autoPanPadding: [40, 40] });
+        cardPopup.setLatLng(toLatLng(info[0], info[1])).setContent(cardHtml(pid)).openOn(map);
+      }
+      if (!cardInfo[pid] && bridge && bridge.request_point_info) bridge.request_point_info(pid);
+    }
+
+    function cardHtml(pid) {
+      const [x, y, labelId, area] = pointInfo.get(pid);
+      const lbl = labelById[labelId] || {};
+      const rg = regionById[area];
+      const got = COLLECTED.has(pid), prob = PROBABLE.has(pid);
+      const d = cardInfo[pid];
+      const gems = lbl.gems ? ` · 💎 ~${lbl.gems}` : '';
+      let dist = '';
+      if (lastPlayer) dist = ` · ${Math.round(Math.hypot(x - lastPlayer.x, y - lastPlayer.y))} ед. от тебя`;
+      let h = `<div class="card-h"><img src="${iconUrl(labelId)}" onerror="this.remove()">${esc(lbl.name || '')}</div>` +
+              `<div class="card-sub">${rg ? esc(rg.name) : ''}${gems}${dist}</div>`;
+      h += prob ? '<div class="card-st prob">❔ вероятно собрано (не найдено на месте)</div>'
+         : got ? '<div class="card-st ok">✓ собрано</div>' : '<div class="card-st">не собрано</div>';
+      // действия — сразу под статусом, чтобы не листать к ним
+      h += '<div class="card-btns">';
+      h += got && !prob ? `<button onclick="cardToggle('${pid}')">↶ Снять отметку</button>`
+                        : `<button class="primary" onclick="cardToggle('${pid}')">✓ ${prob ? 'Подтвердить' : 'Собрано'}</button>`;
+      h += `<button onclick="setTarget('${pid}')">🧭 Вести сюда</button>`;
+      if (d && d.video) h += `<button onclick="openExt('${esc(d.video)}')">▶ Видео</button>`;
+      if (isCustom(pid)) h += `<button onclick="deleteCustom('${pid}')">🗑 Удалить точку</button>`;
+      h += '</div>';
+      if (d && d.custom) {
+        return h + '<div class="card-muted">⭐ Своя точка: этого объекта нет на карте HoYoLAB.</div>';
+      }
+      if (!d) h += '<div class="card-muted">Загружаю подсказки…</div>';
+      else if (d.error) h += '<div class="card-muted">Подсказки загрузить не удалось (нет сети?)</div>';
+      else {
+        if (d.content || d.img) {
+          h += '<div class="tip">';
+          h += `<div class="card-txt">${d.content ? esc(d.content) : '<span class="card-muted">Фото места</span>'}</div>`;
+          if (d.img) h += `<img class="tip-thumb" src="${esc(d.img)}" title="Открыть крупно" onclick="showPhoto('${esc(d.img)}')">`;
+          h += '</div>';
+        }
+        // советы игроков (appsample): как на их сайте — текст, фото, лайки, дата
+        if ((d.tips && d.tips.length) || d.summary) {
+          h += '<div class="tips-h">Советы игроков <span>appsample</span></div>';
+          if (d.summary) h += `<div class="tips-sum">${esc(d.summary)}</div>`;
+          for (const t of (d.tips || [])) {
+            h += '<div class="tip">';
+            h += `<div class="card-txt">${t.text ? esc(t.text) : '<span class="card-muted">Фото</span>'}` +
+                 `<div class="tip-meta">👍 ${t.votes}${t.date ? ' · ' + esc(t.date) : ''}</div></div>`;
+            if (t.thumb) h += `<img class="tip-thumb" src="${esc(t.thumb)}" loading="lazy" title="Открыть крупно" onclick="showPhoto('${esc(t.img)}')">`;
+            h += '</div>';
+          }
+        }
+        if (!d.content && !d.img && !(d.tips && d.tips.length) && !d.summary)
+          h += '<div class="card-muted">У этой точки нет описания и фото</div>';
+      }
+      return h;
+    }
+
+    function refreshCard(pid) {
+      if (cardPid !== String(pid)) return;
+      if (cardPopup && map.hasLayer(cardPopup)) cardPopup.setContent(cardHtml(cardPid));
+      const sheet = document.getElementById('sheet');
+      if (sheet.classList.contains('on')) document.getElementById('sheet-body').innerHTML = cardHtml(cardPid);
+    }
+    function closeCard() {
+      if (cardPopup) map.closePopup(cardPopup);
+      document.getElementById('sheet').classList.remove('on');
+      clearOpen = false;
+    }
+    document.querySelector('#sheet .sheet-x').onclick = closeCard;
+    // ---------- Зачистка региона ----------
+    const KIND_ROWS = [['chest', '🧰', 'Сундуки'], ['valuable', '🔮', 'Окулусы и ценности'],
+      ['seelie', '🧚', 'Феи'], ['challenge', '⏱', 'Испытания'], ['teleport', '📍', 'Телепорты'],
+      ['statue', '🗿', 'Статуи']];
+    let clearOpen = false, clearTimer = null;
+
+    function playerArea() {
+      if (!lastPlayer) return activeRegion;
+      let area = null, bd = Infinity;
+      for (const [, [x, y, , a]] of pointInfo) {
+        const d = Math.hypot(x - lastPlayer.x, y - lastPlayer.y);
+        if (d < bd) { bd = d; area = a; }
+      }
+      return area;
+    }
+
+    function clearHtml() {
+      const area = playerArea();
+      const rg = regionById[area];
+      const stat = {}, near = [];
+      let gemsGot = 0, gemsAll = 0;
+      for (const [pid, [x, y, labelId, a]] of pointInfo) {
+        if (a !== area && !(isCustom(pid) && a == null)) continue;   // своя точка без региона — в текущий
+        const l = labelById[labelId];
+        const kind = Number(labelId) === CUSTOM_LABEL ? 'custom' : (l && l.kind);
+        if (!kind) continue;
+        const st = stat[kind] = stat[kind] || [0, 0];
+        const got = COLLECTED.has(pid);
+        st[0]++; if (got) st[1]++;
+        if (l && l.gems) { gemsAll += l.gems; if (got) gemsGot += l.gems; }
+        if (!got && lastPlayer) near.push([Math.hypot(x - lastPlayer.x, y - lastPlayer.y), pid, labelId]);
+      }
+      let h = `<div class="clr-h">🧹 Зачистка: ${rg ? esc(rg.name) : 'регион не определён'}</div>`;
+      const rows = KIND_ROWS.concat([['custom', '⭐', 'Свои точки']]);
+      for (const [kind, emoji, title] of rows) {
+        const st = stat[kind];
+        if (!st) continue;
+        const extra = kind === 'chest' && gemsAll ? ` · 💎 ~${gemsGot}/${gemsAll}` : '';
+        h += `<div class="clr-row"><span class="k">${emoji}</span><span class="n">${title}</span>` +
+             `<span class="v">${st[1]}/${st[0]}${extra}</span></div>` +
+             `<div class="clr-bar"><i style="width:${(100 * st[1] / st[0]).toFixed(1)}%"></i></div>`;
+      }
+      h += '<div class="card-btns"><button class="primary" onclick="startRoute()">🗺 Маршрут по сундукам</button></div>';
+      h += '<div class="tips-h">Показать на карте (собранное скрыто)</div><div class="card-btns">' +
+           `<button onclick="showKinds(['chest'])">💎 Сундуки</button>` +
+           `<button onclick="showKinds(['valuable'])">🔮 Окулусы</button>` +
+           `<button onclick="showKinds(['chest','valuable','seelie','challenge','teleport','statue'])">🧭 Всё собираемое</button>` +
+           '</div>';
+      if (!lastPlayer) return h + '<div class="card-muted">Включи отслеживание позиции — покажу ближайшее.</div>';
+      near.sort((a, b) => a[0] - b[0]);
+      h += '<div class="tips-h clr-near">Ближайшее несобранное</div>';
+      for (const [d, pid, labelId] of near.slice(0, 8)) {
+        const l = labelById[labelId] || {};
+        h += `<div class="clr-item" onclick="setTarget('${pid}')"><img src="${iconUrl(labelId)}" onerror="this.remove()">` +
+             `<span>${esc(l.name || '')}</span><span class="d">${Math.round(d)} ед. ›</span></div>`;
+      }
+      return h;
+    }
+
+    // быстрые фильтры: включить только слои нужных типов и скрыть собранное
+    window.showKinds = function (kinds) {
+      enabled.clear();
+      for (const l of LABELS) if (l.kind && kinds.includes(l.kind)) enabled.add(l.id);
+      if (kinds.includes('chest')) enabled.add(CUSTOM_LABEL);
+      setHideCollected(true, true);
+      refreshPanel(); renderVisible(); reportState();
+      alertNav(`Показано: ${enabled.size} слоёв, собранное скрыто`);
+    };
+
+    window.toggleClear = function () {
+      const sheet = document.getElementById('sheet');
+      if (clearOpen) { closeCard(); return; }
+      if (cardPopup) map.closePopup(cardPopup);
+      clearOpen = true;
+      document.getElementById('sheet-body').innerHTML = clearHtml();
+      sheet.classList.add('on');
+    };
+
+    function refreshClearSoon() {
+      if (!clearOpen || clearTimer) return;
+      clearTimer = setTimeout(() => {
+        clearTimer = null;
+        if (clearOpen) document.getElementById('sheet-body').innerHTML = clearHtml();
+      }, 1500);
+    }
+
+    // ---------- Свои точки ----------
+    const CUSTOM_LABEL = -1;
+    function isCustom(pid) { return String(pid).startsWith('u'); }
+    function iconUrl(labelId) {
+      return `${META.icons_base}/${Number(labelId) === CUSTOM_LABEL ? 17 : labelId}.png`;
+    }
+    window.addCustomHere = function (x, y) {
+      map.closePopup();
+      if (bridge && bridge.on_custom_add) bridge.on_custom_add(x, y);
+    };
+    window.deleteCustom = function (pid) {
+      closeCard();
+      if (bridge && bridge.on_custom_delete) bridge.on_custom_delete(String(pid));
+    };
+    window.addCustomPoint = function (pid, x, y, area) {
+      pid = String(pid);
+      const list = POINTS_BY_LABEL[CUSTOM_LABEL] = POINTS_BY_LABEL[CUSTOM_LABEL] || [];
+      list.push([pid, x, y, area]);
+      pointInfo.set(pid, [x, y, CUSTOM_LABEL, area]);
+      if (labelById[CUSTOM_LABEL]) labelById[CUSTOM_LABEL].count = list.length;
+      if (!enabled.has(CUSTOM_LABEL)) setLabel(CUSTOM_LABEL, true, true);
+      refreshCounts(CUSTOM_LABEL);
+      renderVisible();
+    };
+    window.removeCustomPoint = function (pid) {
+      pid = String(pid);
+      const list = POINTS_BY_LABEL[CUSTOM_LABEL] || [];
+      POINTS_BY_LABEL[CUSTOM_LABEL] = list.filter(p => String(p[0]) !== pid);
+      pointInfo.delete(pid);
+      COLLECTED.delete(pid); PROBABLE.delete(pid);
+      if (labelById[CUSTOM_LABEL]) labelById[CUSTOM_LABEL].count = POINTS_BY_LABEL[CUSTOM_LABEL].length;
+      refreshCounts(CUSTOM_LABEL);
+      renderVisible();
+    };
+
+    window.showPointInfo = function (pid, data) { cardInfo[String(pid)] = data || {}; refreshCard(pid); };
+    window.openExt = function (url) { if (bridge && bridge.open_url) bridge.open_url(url); };
+    window.cardToggle = function (pid) {
+      if (bridge) bridge.on_marker_clicked(String(pid));
+      closeCard();
+    };
+    // фото — крупно прямо в окне (без внешнего браузера); клик/Esc — закрыть
+    window.showPhoto = function (url) {
+      const lb = document.getElementById('lightbox');
+      lb.querySelector('img').src = url;
+      lb.classList.add('on');
+    };
+    document.getElementById('lightbox').onclick = () => document.getElementById('lightbox').classList.remove('on');
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { document.getElementById('lightbox').classList.remove('on'); closeCard(); }
+    });
+
+    // ---------- Навигация: линия от игрока до цели ----------
+    let navPid = null, navLine = null, nearBtn = null;
+    const ARROWS = ['↑', '↗', '→', '↘', '↓', '↙', '←', '↖'];
+
+    window.setTarget = function (pid, opts) {
+      pid = String(pid);
+      if (!pointInfo.get(pid)) return;
+      if (!(opts && opts.fromRoute)) stopRoute();       // ручная цель — маршрут сбрасываем
+      navPid = pid;
+      closeCard();
+      const [x, y, labelId] = pointInfo.get(pid);
+      if (!enabled.has(labelId)) enableCategory(labelId);
+      updateNav();
+      reportTarget();
+      if (opts && opts.noFit) return;
+      if (lastPlayer) map.fitBounds(L.latLngBounds([toLatLng(x, y), toLatLng(lastPlayer.x, lastPlayer.y)]).pad(0.3), { maxZoom: 0.5 });
+      else map.setView(toLatLng(x, y), Math.max(map.getZoom(), 0));
+    };
+
+    function clearTarget() {
+      navPid = null;
+      if (navLine) { map.removeLayer(navLine); navLine = null; }
+      document.getElementById('nav').classList.remove('on', 'here');
+      stopRoute();
+      reportTarget();
+    }
+
+    // цель -> Python (HUD поверх игры: стрелка у мини-карты, подсказка, звук)
+    function reportTarget() {
+      if (!bridge || !bridge.on_target_changed) return;
+      if (!navPid) { bridge.on_target_changed(''); return; }
+      const [x, y, labelId] = pointInfo.get(navPid);
+      const left = route ? route.filter(pid => !COLLECTED.has(pid)).length : 0;
+      bridge.on_target_changed(JSON.stringify({
+        pid: navPid, x, y, name: (labelById[labelId] || {}).name || '', left }));
+    }
+
+    // ---------- Маршрут по несобранным сундукам региона ----------
+    let route = null, routeLine = null;
+
+    function isChestLabel(labelId) {
+      const l = labelById[labelId];
+      return !!l && /сундук/i.test(l.name);
+    }
+
+    // ближайший сосед + 2-opt: короткий обход без петель
+    function planRoute(sx, sy, ids) {
+      const P = ids.map(pid => pointInfo.get(pid));
+      const n = ids.length, used = new Array(n).fill(false), order = [];
+      let cx = sx, cy = sy;
+      for (let k = 0; k < n; k++) {
+        let bi = -1, bd = Infinity;
+        for (let i = 0; i < n; i++) {
+          if (used[i]) continue;
+          const d = Math.hypot(P[i][0] - cx, P[i][1] - cy);
+          if (d < bd) { bd = d; bi = i; }
+        }
+        used[bi] = true; order.push(bi); cx = P[bi][0]; cy = P[bi][1];
+      }
+      const pt = i => (i < 0 ? [sx, sy] : P[order[i]]);
+      const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+      for (let pass = 0, improved = true; improved && pass < 40; pass++) {
+        improved = false;
+        for (let i = 0; i < n - 1; i++) {
+          for (let j = i + 1; j < n; j++) {
+            const a = pt(i - 1), b = pt(i), c = pt(j), d = j + 1 < n ? pt(j + 1) : null;
+            const before = dist(a, b) + (d ? dist(c, d) : 0);
+            const after = dist(a, c) + (d ? dist(b, d) : 0);
+            if (after + 1e-6 < before) {
+              order.splice(i, j - i + 1, ...order.slice(i, j + 1).reverse());
+              improved = true;
+            }
+          }
+        }
+      }
+      return order.map(i => ids[i]);
+    }
+
+    window.startRoute = function () {
+      if (!lastPlayer) { alertNav('Маршрут: включи отслеживание позиции'); return; }
+      // регион — тот, где стоит игрок (по ближайшей точке), а не выбранный фильтр:
+      // иначе при выбранном «Ли Юэ» стрелка повела бы из Мондштадта через полмира
+      let area = null, bd = Infinity;
+      for (const [, [x, y, , a]] of pointInfo) {
+        const d = Math.hypot(x - lastPlayer.x, y - lastPlayer.y);
+        if (d < bd) { bd = d; area = a; }
+      }
+      if (activeRegion !== null && activeRegion !== area) selectRegion(area, { noFly: true });
+      const ids = [];
+      for (const [pid, [, , labelId, a]] of pointInfo)
+        if (a === area && isChestLabel(labelId) && !COLLECTED.has(pid)) ids.push(pid);
+      if (!ids.length) { alertNav('В этом регионе все сундуки собраны 🎉'); return; }
+      route = planRoute(lastPlayer.x, lastPlayer.y, ids);
+      drawRoute();
+      document.getElementById('mb-route').classList.add('on');
+      setTarget(route[0], { fromRoute: true });
+    };
+
+    function stopRoute() {
+      if (!route) return;
+      route = null;
+      if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
+      document.getElementById('mb-route').classList.remove('on');
+    }
+
+    function drawRoute() {
+      if (!route) return;
+      const pts = route.filter(pid => !COLLECTED.has(pid)).map(pid => {
+        const [x, y] = pointInfo.get(pid); return toLatLng(x, y);
+      });
+      if (!routeLine) routeLine = L.polyline(pts, { color: '#8ea1c2', weight: 2, opacity: .7,
+                                                    dashArray: '4 8', interactive: false }).addTo(map);
+      else routeLine.setLatLngs(pts);
+    }
+
+    // цель маршрута собрана — к следующей
+    function advanceRoute() {
+      const next = route.find(pid => !COLLECTED.has(pid));
+      drawRoute();
+      if (next) setTarget(next, { fromRoute: true, noFit: true });
+      else { alertNav('Маршрут пройден: все сундуки региона собраны 🎉'); clearTarget(); }
+    }
+
+    function alertNav(text) {
+      const nav = document.getElementById('nav');
+      nav.classList.add('on');
+      document.getElementById('nav-txt').textContent = text;
+      setTimeout(() => { if (!navPid) nav.classList.remove('on'); }, 4000);
+    }
+    document.getElementById('nav-x').onclick = clearTarget;
+
+    function updateNav() {
+      if (!navPid) return;
+      if (COLLECTED.has(navPid) && !PROBABLE.has(navPid)) {
+        if (route) advanceRoute(); else clearTarget();
+        return;
+      }
+      const [x, y, labelId] = pointInfo.get(navPid);
+      const nav = document.getElementById('nav');
+      const name = (labelById[labelId] || {}).name || '';
+      nav.classList.add('on');
+      if (!lastPlayer) {
+        document.getElementById('nav-txt').textContent = `${name} — включи отслеживание позиции`;
+        return;
+      }
+      const dx = x - lastPlayer.x, dy = y - lastPlayer.y;
+      const d = Math.hypot(dx, dy);
+      const ang = (Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360;   // 0 = север (вверх)
+      nav.querySelector('.arrow').textContent = d < 12 ? '📍' : ARROWS[Math.round(ang / 45) % 8];
+      nav.classList.toggle('here', d < 12);
+      document.getElementById('nav-txt').textContent = d < 12 ? `${name} — ты на месте` : `${name} — ${Math.round(d)} ед.`;
+      const pts = [toLatLng(lastPlayer.x, lastPlayer.y), toLatLng(x, y)];
+      if (!navLine) navLine = L.polyline(pts, { color: '#58a6ff', weight: 3, opacity: .9,
+                                                className: 'gm-nav-line', interactive: false }).addTo(map);
+      else navLine.setLatLngs(pts);
+    }
+
+    // нижняя панель мини-режима
+    document.getElementById('mb-in').onclick = () => map.zoomIn(0.5);
+    document.getElementById('mb-out').onclick = () => map.zoomOut(0.5);
+    document.getElementById('mb-home').onclick = () => selectRegion(null);
+    document.getElementById('mb-chest').onclick = () => navNearestChest();
+    document.getElementById('mb-route').onclick = () => (route ? clearTarget() : startRoute());
+    document.getElementById('mb-clear').onclick = () => toggleClear();
+    document.getElementById('mb-follow').onclick = () => {
+      if (!lastPlayer) return;
+      setFollow(!follow);
+      followWanted = follow;             // выключил вручную — не возвращать само
+    };
+
+    function navNearestChest() {
+      if (!lastPlayer) return;
+      let best = null, bd = Infinity;
+      for (const [pid, [x, y, labelId]] of pointInfo) {
+        const lbl = labelById[labelId];
+        if (!lbl || !/сундук/i.test(lbl.name) || COLLECTED.has(pid)) continue;
+        const d = Math.hypot(x - lastPlayer.x, y - lastPlayer.y);
+        if (d < bd) { bd = d; best = pid; }
+      }
+      if (best) setTarget(best);
+    }
+
+    function clearPlayer() {
+      lastPlayer = null;
+      if (playerMarker) { map.removeLayer(playerMarker); playerMarker = null; }
+      setFollow(false);
+      if (meBtn) { meBtn.classList.add('off'); followBtn.classList.add('off'); }
+    }
+
+    // В мини-режиме карта следует за игроком; если сдвинул её рукой — через
+    // FOLLOW_RESUME_MS без касаний снова возвращается к игроку.
+    const FOLLOW_RESUME_MS = 6000;
+    let followWanted = false, followTimer = null;
+    function scheduleFollowResume() {
+      clearTimeout(followTimer);
+      followTimer = setTimeout(() => {
+        followTimer = null;
+        if (followWanted) setFollow(true);
+      }, FOLLOW_RESUME_MS);
+    }
+
+    function setFollow(on) {
+      follow = !!on && !!lastPlayer;
+      if (followBtn) followBtn.classList.toggle('on', follow);
+      document.getElementById('mb-follow').classList.toggle('on', follow);
+      if (follow) map.setView(toLatLng(lastPlayer.x, lastPlayer.y), Math.max(map.getZoom(), -0.5));
+      reportState();
+    }
+
+    // Перелёт к точке + пульсирующее кольцо (авто-отметка, клик по журналу).
+    // move=false — только кольцо, вид карты не трогаем (авто-отметка не должна
+    // уводить карту, которую пользователь двигает сам).
+    function highlightPoint(pid, move) {
+      pid = String(pid);
+      const info = pointInfo.get(pid);
+      if (!info) return;
+      const [x, y, labelId] = info;
+      const ll = toLatLng(x, y);
+      if (move !== false) {
+        if (!enabled.has(labelId)) enableCategory(labelId);   // показать слой точки
+        setFollow(false);
+        map.setView(ll, Math.max(map.getZoom(), 0), { animate: true });
+      }
+      const ring = L.marker(ll, { icon: L.divIcon({ className: '', iconSize: [44, 44], iconAnchor: [22, 22],
+                               html: '<div class="gm-pulse"></div>' }), interactive: false, zIndexOffset: 4000 });
+      ring.addTo(map);
+      setTimeout(() => map.removeLayer(ring), 3500);
+    }
+
+    // ---------- Сохранение состояния (в Python) ----------
+    // Стартуем в режиме восстановления, чтобы moveend от начального fitBounds
+    // не перезаписал сохранённое состояние ДО того, как Python пришлёт applyState.
+    let _restoring = true;
+    const reportState = debounce(function () {
+      if (_restoring || !bridge || !bridge.on_state_changed || !map) return;
+      const c = map.getCenter();
+      bridge.on_state_changed(JSON.stringify({
+        enabled: Array.from(enabled),
+        view: { lat: c.lat, lng: c.lng, zoom: map.getZoom() },
+        region: activeRegion,
+        hide_collected: hideCollected,
+        follow: follow,
+      }));
+    }, 400);
+
+    // --- Python -> JS: восстановить сохранённое состояние ---
+    function applyState(state) {
+      state = state || {};
+      if (state.enabled) state.enabled.forEach(id => setLabel(id, true, true));
+      setHideCollected(!!state.hide_collected, true);
+      if (state.region !== undefined && state.region !== null) selectRegion(state.region, { noFly: true });
+      refreshPanel();
+      const v = state.view;
+      function done() { _restoring = false; renderVisible(); }
+      if (v && typeof v.lat === 'number') {
+        // повторяем setView, пока не применится (размер контейнера может появиться не сразу)
+        let tries = 0;
+        (function apply() {
+          map.invalidateSize();
+          map.setView([v.lat, v.lng], v.zoom, { animate: false });
+          tries++;
+          const ok = Math.abs(map.getZoom() - v.zoom) < 0.01 &&
+                     Math.abs(map.getCenter().lat - v.lat) < 1;
+          if (!ok && tries < 20) setTimeout(apply, 200);
+          else setTimeout(done, 100);
+        })();
+      } else {
+        setTimeout(done, 200);
+      }
+    }
+
+    // ---------- Слои ----------
+    function setLabel(labelId, on, silent) {
+      labelId = Number(labelId);
+      if (!labelById[labelId]) return;
+      if (on) enabled.add(labelId); else enabled.delete(labelId);
+      if (!silent) { refreshPanel(); renderVisible(); reportState(); }
+    }
+
+    function setGroup(gname, on) {
+      const g = groupEls[gname];
+      g.labels.forEach(id => { if (visibleCount(id) > 0 || !on) setLabel(id, on, true); });
+      refreshPanel(); renderVisible(); reportState();
+    }
+
+    function clearLayers() {
+      enabled.clear();
+      refreshPanel(); renderVisible(); reportState();
+    }
+
+    function setHideCollected(on, silent) {
+      hideCollected = !!on;
+      document.getElementById('btn-hide').classList.toggle('on', hideCollected);
+      if (!silent) { renderVisible(); reportState(); }
+    }
+
+    // --- Построение карты из бандла mapdata_<id>.js ---
+    function loadData(payload) {
+      const d = (typeof payload === 'string') ? JSON.parse(payload) : payload;
+      META = d.meta;
+      LABELS = d.labels;
+      POINTS_BY_LABEL = d.points_by_label;
+      REGIONS = d.regions || [];
+      LABELS.forEach(l => labelById[l.id] = l);
+      REGIONS.forEach(r => regionById[r.id] = r);
+      for (const lid in POINTS_BY_LABEL) {
+        const n = Number(lid);
+        for (const p of POINTS_BY_LABEL[lid]) pointInfo.set(String(p[0]), [p[1], p[2], n, p[3]]);
+      }
+      document.getElementById('mapname').textContent = META.name || 'Карта';
+      document.title = META.name || document.title;
+      initMap();
+      buildRegions();
+      buildPanel();
+      refreshCounts();
+      const ln = document.getElementById('loading');
+      if (ln) ln.classList.add('hidden');
+    }
+
+    // --- Python -> JS: включить категорию (из авто-распознавания) ---
+    function enableCategory(labelId) {
+      labelId = Number(labelId);
+      if (!labelById[labelId]) return;
+      if (!enabled.has(labelId)) setLabel(labelId, true);
+      const r = rowByLabel[labelId];
+      if (r) groupEls[r.group].el.classList.add('open');
+    }
+
+    // --- Python -> JS: применить список собранных точек ---
+    function applyCollected(ids, probable) {
+      COLLECTED = new Set((ids || []).map(String));
+      PROBABLE = new Set((probable || []).map(String));
+      for (const pid of Object.keys(markerByPoint)) paintCollected(pid);
+      refreshCounts();
+      renderVisible();
+    }
+
+    // --- Python -> JS: отметить/снять отметку конкретной точки ---
+    // Лёгкий путь: переключаем CSS-класс на существующем элементе, НЕ пересоздаём
+    // иконку (пересоздание divIcon тормозило при клике).
+    function setCollected(pointId, collected, probable) {
+      pointId = String(pointId);
+      if (collected) COLLECTED.add(pointId); else COLLECTED.delete(pointId);
+      if (collected && probable) PROBABLE.add(pointId); else PROBABLE.delete(pointId);
+      refreshCard(pointId);
+      refreshClearSoon();
+      if (pointId === navPid) updateNav();
+      paintCollected(pointId);
+      const info = pointInfo.get(pointId);
+      if (info) refreshCounts(info[2]);
+      if (hideCollected && collected) renderVisible(); else updateStat();
+    }
+
+    function paintCollected(pid) {
+      const entry = markerByPoint[pid];
+      if (!entry) return;
+      const collected = COLLECTED.has(pid), probable = PROBABLE.has(pid);
+      const el = entry.marker.getElement();
+      if (el) {
+        const ico = el.querySelector('.gm-ico');
+        if (ico) {
+          ico.classList.toggle('collected', collected);
+          ico.classList.toggle('probable', probable);
+        }
+      }
+      if (entry.marker.getTooltip()) entry.marker.setTooltipContent(tipText(entry.labelId, collected, entry.area, probable));
+    }
+
+    // ---------- Панель категорий ----------
+    const CHEV = '<svg class="chev" viewBox="0 0 24 24"><path d="M8 5l8 7-8 7z"/></svg>';
+
+    function buildPanel() {
+      const groups = {};
+      LABELS.forEach(l => { (groups[l.group] = groups[l.group] || []).push(l); });
+      const names = Object.keys(groups).sort((a, b) => {
+        const ia = GROUP_ORDER.indexOf(a), ib = GROUP_ORDER.indexOf(b);
+        return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b, 'ru');
+      });
+      const box = document.getElementById('cats');
+      box.innerHTML = '';
+      names.forEach(gname => {
+        const items = groups[gname];
+        const g = document.createElement('div'); g.className = 'grp';
+        const h = document.createElement('div'); h.className = 'grp-h';
+        const gcb = document.createElement('input'); gcb.type = 'checkbox'; gcb.className = 'cb';
+        gcb.title = 'Включить/выключить всю группу';
+        gcb.onclick = e => e.stopPropagation();
+        gcb.onchange = () => setGroup(gname, gcb.checked);
+        const gname_el = document.createElement('span'); gname_el.className = 'g-name'; gname_el.textContent = gname;
+        const gcnt = document.createElement('span'); gcnt.className = 'g-cnt';
+        h.insertAdjacentHTML('beforeend', CHEV);
+        h.append(gname_el, gcnt, gcb);
+        const body = document.createElement('div'); body.className = 'grp-body';
+        h.onclick = () => g.classList.toggle('open');
+        groupEls[gname] = { el: g, cb: gcb, cnt: gcnt, labels: items.map(l => l.id) };
+        items.forEach(l => {
+          const row = document.createElement('label'); row.className = 'lbl';
+          row.dataset.name = l.name.toLowerCase();
+          const cb = document.createElement('input'); cb.type = 'checkbox'; cb.className = 'cb';
+          cb.onchange = () => setLabel(l.id, cb.checked);
+          const img = document.createElement('img'); img.src = iconUrl(l.id);
+          img.onerror = () => { img.classList.add('ico-missing'); img.removeAttribute('src'); };
+          const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = l.name;
+          const cnt = document.createElement('span'); cnt.className = 'cnt';
+          const bar = document.createElement('div'); bar.className = 'bar';
+          bar.innerHTML = '<i></i>';
+          row.append(cb, img, nm, cnt, bar);
+          body.appendChild(row);
+          rowByLabel[l.id] = { row, cb, cnt, bar: bar.firstChild, group: gname };
+        });
+        g.append(h, body); box.appendChild(g);
+      });
+      refreshPanel();
+    }
+
+    // сколько точек категории в текущем регионе / сколько из них собрано
+    const countCache = {};
+    function computeCounts(labelId) {
+      const pts = POINTS_BY_LABEL[labelId] || [];
+      let total = 0, got = 0;
+      for (const p of pts) {
+        if (!inRegion(p)) continue;
+        total++;
+        if (COLLECTED.has(String(p[0]))) got++;
+      }
+      countCache[labelId] = [total, got];
+    }
+    function visibleCount(labelId) { return (countCache[labelId] || [0])[0]; }
+
+    // Пересчёт счётчиков: всех категорий (смена региона/прогресса) или одной.
+    function refreshCounts(onlyLabel) {
+      if (onlyLabel !== undefined) computeCounts(onlyLabel);
+      else LABELS.forEach(l => computeCounts(l.id));
+      refreshPanel();
+      updateRegionProgress();
+    }
+
+    // Отрисовать состояние панели из enabled/countCache (без пересчёта точек).
+    function refreshPanel() {
+      const q = document.getElementById('search').value.trim().toLowerCase();
+      for (const gname in groupEls) {
+        const g = groupEls[gname];
+        let gt = 0, gg = 0, on = 0, shown = 0, avail = 0;
+        g.labels.forEach(id => {
+          const r = rowByLabel[id];
+          const [total, got] = countCache[id] || [0, 0];
+          const isOn = enabled.has(id);
+          r.cb.checked = isOn;
+          r.row.classList.toggle('on', isOn);
+          r.cnt.textContent = got ? `${got}/${total}` : String(total);
+          r.cnt.classList.toggle('done', total > 0 && got === total);
+          r.bar.style.width = total ? (100 * got / total).toFixed(1) + '%' : '0';
+          const hit = total > 0 && (!q || r.row.dataset.name.includes(q));
+          r.row.style.display = hit ? '' : 'none';
+          if (hit) shown++;
+          if (total > 0) { avail++; gt += total; gg += got; if (isOn) on++; }
+        });
+        g.cnt.textContent = gg ? `${gg}/${gt}` : String(gt);
+        g.cb.checked = avail > 0 && on === avail;
+        g.cb.indeterminate = on > 0 && on < avail;
+        g.el.style.display = shown ? '' : 'none';
+        if (q) g.el.classList.toggle('open', shown > 0);   // при поиске раскрываем найденное
+      }
+      renderActive();
+    }
+
+    function renderActive() {
+      const box = document.getElementById('active');
+      box.innerHTML = '';
+      for (const id of enabled) {
+        const l = labelById[id];
+        if (!l) continue;
+        const chip = document.createElement('span'); chip.className = 'chip';
+        chip.title = 'Выключить слой';
+        chip.innerHTML = `<img src="${iconUrl(id)}" onerror="this.remove()"><span></span><b>×</b>`;
+        chip.querySelector('span').textContent = l.name;
+        chip.onclick = () => setLabel(id, false);
+        box.appendChild(chip);
+      }
+    }
+
+    // прогресс «собрано %» на чипах регионов и на подписях карты
+    function updateRegionProgress() {
+      if (!REGIONS.length) return;
+      const tot = {}, got = {};
+      for (const lid of enabled) {
+        for (const p of (POINTS_BY_LABEL[lid] || [])) {
+          tot[p[3]] = (tot[p[3]] || 0) + 1;
+          if (COLLECTED.has(String(p[0]))) got[p[3]] = (got[p[3]] || 0) + 1;
+        }
+      }
+      REGIONS.forEach(r => {
+        const t = tot[r.id] || 0, g = got[r.id] || 0;
+        const txt = t ? `${g}/${t}` : '';
+        const chip = document.querySelector(`#regions .rg[data-id="${r.id}"] .pc`);
+        if (chip) chip.textContent = txt;
+        const lbl = document.querySelector(`.gm-region-lbl[data-rid="${r.id}"] small`);
+        if (lbl) lbl.textContent = txt ? `собрано ${g} из ${t}` : '';
+      });
+    }
+
+    document.getElementById('search').addEventListener('input', refreshPanel);
+    document.getElementById('btn-hide').onclick = () => setHideCollected(!hideCollected);
+    document.getElementById('btn-clear').onclick = clearLayers;
+
+    function updateStat() {
+      const total = LABELS.reduce((s, l) => s + l.count, 0);
+      document.getElementById('badge').textContent = LABELS.length + ' кат.';
+      const ri = lastRenderInfo;
+      let view = '';
+      if (enabled.size) {
+        view = `<br>В кадре: <b>${ri.shown}</b>` +
+               (ri.thinned ? ` из ${ri.inView} <span class="warn">· приблизь, чтобы увидеть все</span>` : '');
+      }
+      const rg = activeRegion !== null ? ` · <b>${regionById[activeRegion].name}</b>` : '';
+      document.getElementById('stat').innerHTML =
+        `Точек: <b>${total.toLocaleString('ru')}</b> · Собрано: <b>${COLLECTED.size}</b> · ` +
+        `Слоёв: <b>${enabled.size}</b>${rg}${view}`;
+    }
+
+    window.loadData = loadData;
+    window.setCollected = setCollected;
+    window.applyCollected = applyCollected;
+    window.enableCategory = enableCategory;
+    window.applyState = applyState;
+    window.setPlayer = setPlayer;
+    window.setLostHint = function (on) { document.getElementById('lost').classList.toggle('on', !!on); };
+    window.clearPlayer = clearPlayer;
+    window.highlightPoint = highlightPoint;
+    window.setMaxMarkers = function (n) { MAX_MARKERS = Math.max(100, n | 0); renderVisible(); };
+    window.setCompact = function (on) {
+      document.body.classList.toggle('compact', !!on);
+      if (!on) document.getElementById('sheet').classList.remove('on');
+      followWanted = !!on;
+      clearTimeout(followTimer); followTimer = null;
+      if (map) setTimeout(() => {
+        map.invalidateSize();
+        if (on && lastPlayer) setFollow(true);    // мини-режим — сразу за игроком
+      }, 50);
+    };
+
+    // Сообщаем Python 'готово' ТОЛЬКО когда И карта построена, И мост подключён —
+    // иначе applyState/applyCollected прилетят раньше, чем создан map (был баг).
+    let _built = false, _readySent = false;
+    function trySignalReady() {
+      if (_built && bridge && bridge.on_ready && !_readySent) {
+        _readySent = true;
+        bridge.on_ready();
+      }
+    }
+
+    // Подгружаем бандл нужной карты по фрагменту #map=<id> и строим карту.
+    (function loadBundle() {
+      const params = new URLSearchParams(location.hash.slice(1));
+      const mapId = params.get('map') || '2';
+      const s = document.createElement('script');
+      s.src = 'mapdata_' + mapId + '.js?v=' + (params.get('v') || '');
+      s.onload = () => {
+        if (window.__MAPDATA) { loadData(window.__MAPDATA); _built = true; trySignalReady(); }
+        else document.getElementById('stat').textContent = 'Пустые данные карты';
+      };
+      s.onerror = () => {
+        document.getElementById('stat').textContent =
+          'Нет данных карты. Запусти: python tools/fetch_map_data.py';
+        const ln = document.getElementById('loading');
+        if (ln) ln.classList.add('hidden');
+      };
+      document.head.appendChild(s);
+    })();
+
+    // Подключаем мост к Python (для отметок и авто-распознавания).
+    if (typeof qt !== 'undefined' && qt.webChannelTransport) {
+      new QWebChannel(qt.webChannelTransport, function(channel) {
+        bridge = channel.objects.bridge;
+        trySignalReady();
+      });
+    }
+  </script>
+</body>
+</html>

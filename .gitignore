@@ -1,0 +1,41 @@
+.venv/
+__pycache__/
+*.pyc
+.ruff_cache/
+
+# Личное: прогресс, настройки, профили аккаунтов, память наблюдений, свои точки
+data/progress.json
+data/ui_state.json
+data/settings.json
+data/observations.json
+data/custom_points.json
+data/sync_state.json
+data/profiles/
+data/point_info/
+
+# Скачанные данные и ассеты карт (получаются через tools/fetch_map_data.py)
+data/maps/
+assets/maps/
+assets/map.jpg
+assets/markers/
+assets/templates/
+assets/prompts/
+src/genshinmap/web/mapdata*.js
+
+# Старая одиночная раскладка (до мультикарты)
+data/map_meta.json
+data/labels.json
+data/points.json
+assets/tiles/
+assets/icons/
+assets/map_small.png
+
+# Рабочие скриншоты, записи отладки, заметки сессий
+scratch/
+debug/
+docs/
+
+# сборка exe
+dist/
+build/
+*.spec
