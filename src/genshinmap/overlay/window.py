@@ -48,6 +48,12 @@ from ..custom_points import CUSTOM_LABEL, CUSTOM_NAME, CustomPoints
 from ..datasync import DataSync
 from ..detector.process_watcher import is_genshin_running
 from ..mapindex import Candidate, MapIndex
+from ..navigation import (
+    NavGrid,
+    ensure_road_reference,
+    lookahead,
+    road_reference_path,
+)
 from ..paths import PROJECT_ROOT, WEB_DIR
 from ..pointinfo import PointInfoService
 from ..progress_io import export_progress, import_progress
@@ -59,7 +65,12 @@ from ..version import __version__
 from ..vision.debug_recorder import DebugRecorder
 from ..vision.detection_service import DetectionService
 from ..vision.position_service import PositionService, region_from_frac
-from ..vision.position_tracker import DEFAULT_SCALE
+from ..vision.position_tracker import (
+    DEFAULT_SCALE,
+    REF_ZOOM,
+    reference_path,
+    water_reference_path,
+)
 from ..vision.prompt_detector import PromptDetector
 from .bridge import MapBridge
 from .calibration_dialog import CalibrationDialog
@@ -160,7 +171,7 @@ def _load_map_payload(map_id: int, name: str, custom: list[dict] | None = None) 
     for p in points:
         lid = p["label_id"]
         points_by_label.setdefault(str(lid), []).append(
-            [p["id"], p["x"], p["y"], p.get("area_id", 0)])
+            [p["id"], p["x"], p["y"], p.get("area_id", 0), p.get("layer", 0)])
         counts[lid] = counts.get(lid, 0) + 1
 
     used_labels = [
@@ -391,6 +402,7 @@ class OverlayWindow(QMainWindow):
         self.hud = NavHud()
         self.hud.minimap_frac = self.settings.get("minimap")
         self.bridge.targetChanged.connect(self._on_target_changed)
+        self.bridge.navPathReady.connect(self._on_nav_path)
         self.point_info.loaded.connect(self._on_card_for_hud)
         self._fg_timer = QTimer(self)
         self._fg_timer.timeout.connect(self._check_game_foreground)
@@ -520,6 +532,7 @@ class OverlayWindow(QMainWindow):
         if hasattr(self, "gems_label"):
             self._update_gems()
         self.position_service.set_map(mid, self.meta, ASSETS_MAPS / str(mid), self._map_scale(mid))
+        self._build_nav_grid(mid)
 
     def switch_map(self, map_id: int) -> None:
         if map_id == self.current_map_id:
@@ -1059,9 +1072,83 @@ class OverlayWindow(QMainWindow):
         self.view.load(_map_url(self.current_map_id))
 
     # ---- HUD навигации ----
+    # ---- Путь по местности (A*) ----
+    def _build_nav_grid(self, mid: int) -> None:
+        """Сетка проходимости — в фоне (ждёт референсы, которые готовит трекер)."""
+        self.nav_grid = None
+        self._nav_path: list = []
+        meta = dict(self.meta)
+
+        def work() -> None:
+            a = ASSETS_MAPS / str(mid)
+            gray, water = reference_path(meta, a), water_reference_path(meta, a)
+            for _ in range(600):                          # до 10 мин на первую загрузку
+                if gray.exists() and water.exists():
+                    break
+                time.sleep(1)
+            else:
+                return
+            try:
+                road = road_reference_path(meta, a)
+                ensure_road_reference(meta, road)
+                grid = NavGrid(meta, gray, REF_ZOOM, water, road)
+            except Exception as e:  # noqa: BLE001 — без сетки ведём по прямой
+                self._diag(f"сетка пути не построена: {e}")
+                return
+            if mid == self.current_map_id:
+                self.nav_grid = grid
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _replan(self, force: bool = False) -> None:
+        """Проложить путь от игрока к цели (в фоне, не чаще раза в 2 с)."""
+        target, pos = self.hud.target, self.position_service.latest(POSITION_MAX_AGE)
+        if not target or pos is None or self.nav_grid is None:
+            return
+        now = time.monotonic()
+        if not force and now - getattr(self, "_nav_t", 0.0) < 2.0:
+            return
+        if getattr(self, "_nav_busy", False):
+            return
+        self._nav_t, self._nav_busy = now, True
+        grid, start, goal, pid = self.nav_grid, (pos.x, pos.y), (target["x"], target["y"]), target["pid"]
+
+        def work() -> None:
+            try:
+                path = grid.plan(start, goal)
+            except Exception:  # noqa: BLE001
+                path = []
+            self._nav_busy = False
+            self.bridge.navPathReady.emit(pid, json.dumps(path))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_nav_path(self, pid: str, path_json: str) -> None:
+        if not self.hud.target or self.hud.target.get("pid") != pid:
+            return
+        self._nav_path = [tuple(p) for p in json.loads(path_json)]
+        self.hud.set_path(self._nav_path)
+        self._js(f"window.setNavPath({path_json});")
+
+    def _follow_path(self, pos) -> None:
+        """Каждая позиция: отклонился от пути — перестроить."""
+        if not self.hud.target:
+            return
+        if not self._nav_path:
+            self._replan()
+            return
+        _, _, dev = lookahead(self._nav_path, pos.x, pos.y)
+        if dev > 50:
+            self._replan()
+
     def _on_target_changed(self, target_json: str) -> None:
         target = json.loads(target_json) if target_json else None
+        if (target or {}).get("pid") != (self.hud.target or {}).get("pid"):
+            self._nav_path = []
+            self.hud.set_path([])
         self.hud.set_target(target)
+        if target:
+            self._replan(force=True)
         if target and self.settings.get("hud_enabled", True):
             self.point_info.request(target["pid"])        # подсказка + фото для HUD
 
@@ -1082,6 +1169,7 @@ class OverlayWindow(QMainWindow):
         self._js(f"window.setPlayer({pos.x}, {pos.y}, {pos.score:.3f}, {str(weak).lower()});")
         if not weak:
             self.hud.set_player(pos.x, pos.y)
+            self._follow_path(pos)
 
     def _on_position_lost(self) -> None:
         """Позиция потеряна: чаще всего подземелье/многоуровневая зона (их карт у

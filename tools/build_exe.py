@@ -101,7 +101,7 @@ def copy_data() -> None:
         dst = OUT / "assets" / "maps" / m.name
         if (m / "icons").exists():
             shutil.copytree(m / "icons", dst / "icons", dirs_exist_ok=True)
-        for ref in [*m.glob("ref_*_z1.png"), *m.glob("water_*_z2.png")]:
+        for ref in [*m.glob("ref_*_z1.png"), *m.glob("water_*_z2.png"), *m.glob("road_*_z2.png")]:
             dst.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ref, dst / ref.name)
     # страница карты (mapdata_*.js приложение создаёт само при запуске)

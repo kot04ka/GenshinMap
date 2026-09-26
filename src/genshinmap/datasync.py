@@ -101,9 +101,18 @@ def fetch_map(map_id: int, log: Log = print) -> dict:
     labels = [{"id": l["id"], "name": l["name"], "icon": l.get("icon", ""),
                "parent_id": l.get("parent_id", 0), "group": group_of.get(l["id"], "Прочее")}
               for l in pdata["label_list"]]
-    points = [{"id": p["id"], "label_id": p["label_id"],
-               "x": round(p["x_pos"], 2), "y": round(p["y_pos"], 2),
-               "area_id": p.get("area_id", 0)} for p in pdata["point_list"]]
+    points = []
+    for p in pdata["point_list"]:
+        pt = {"id": p["id"], "label_id": p["label_id"],
+              "x": round(p["x_pos"], 2), "y": round(p["y_pos"], 2),
+              "area_id": p.get("area_id", 0)}
+        # уровень: 1 — пещера/подземелье, 2 — под водой, 3 — нижний уровень (Фонтейн)
+        if p.get("icon_sign"):
+            pt["layer"] = p["icon_sign"]
+        grp = p.get("point_group") or {}
+        if grp.get("floor_id"):
+            pt["floor"] = grp["floor_id"]
+        points.append(pt)
 
     # что изменилось по сравнению с тем, что уже было
     old_ids: set[int] = set()

@@ -17,6 +17,7 @@ class MapBridge(QObject):
     openUrlRequested = pyqtSignal(str)         # открыть ссылку во внешнем браузере
     targetChanged = pyqtSignal(str)            # цель навигации (JSON или "") — для HUD
     customAdd = pyqtSignal(float, float)       # своя точка: мировые x, y
+    navPathReady = pyqtSignal(str, str)        # путь к цели готов (из фонового потока)
     customDelete = pyqtSignal(str)
 
     @pyqtSlot()

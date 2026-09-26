@@ -163,6 +163,16 @@
     .gm-nav-line { stroke-dasharray: 8 8; animation: dash 1s linear infinite; }
     @keyframes dash { to { stroke-dashoffset: -16; } }
 
+    /* уровень точки: пещера / под водой / нижний уровень — значок в углу иконки */
+    .gm-ico[data-layer]::before { position: absolute; left: -4px; top: -4px; font-size: 11px;
+      line-height: 14px; width: 15px; height: 15px; text-align: center; border-radius: 50%;
+      background: rgba(10,14,22,.9); box-shadow: 0 0 0 1px rgba(255,255,255,.35); }
+    .gm-ico[data-layer="1"]::before { content: '🕳'; }
+    .gm-ico[data-layer="2"]::before { content: '🌊'; }
+    .gm-ico[data-layer="3"]::before { content: '⬇'; }
+    .card-layer { font-size: 12px; margin: 2px 0 6px; padding: 5px 8px; border-radius: 7px;
+      background: rgba(210,153,34,.14); border: 1px solid rgba(210,153,34,.45); color: #ffe2a3; }
+
     /* подсветка точки (авто-отметка / переход из журнала) */
     .gm-pulse {
       width: 44px; height: 44px; border-radius: 50%; border: 3px solid var(--good);
@@ -575,12 +585,16 @@
     function inRegion(pt) { return activeRegion === null || pt[3] === activeRegion; }
 
     // ---------- Маркеры ----------
-    function makeIcon(labelId, collected, probable) {
+    const LAYER_TEXT = { 1: '🕳 В пещере / под землёй — ищи вход', 2: '🌊 Под водой',
+                         3: '⬇ Нижний уровень' };
+
+    function makeIcon(labelId, collected, probable, layer) {
       const url = iconUrl(labelId);
       const onerr = "this.style.display='none';this.parentNode.classList.add('gm-fallback')";
       return L.divIcon({
         className: '',
-        html: `<div class="gm-ico${collected ? ' collected' : ''}${probable ? ' probable' : ''}">` +
+        html: `<div class="gm-ico${collected ? ' collected' : ''}${probable ? ' probable' : ''}"` +
+              `${layer ? ` data-layer="${layer}"` : ''}>` +
               `<img src="${url}" onerror="${onerr}"></div>`,
         iconSize: [30, 30], iconAnchor: [15, 15],
       });
@@ -595,15 +609,17 @@
       const lbl = labelById[labelId];
       const rg = regionById[area];
       const mark = probable ? ' ?' : (collected ? ' ✓' : '');
+      const lay = (arguments[4] && LAYER_TEXT[arguments[4]]) ? `<div class="sub">${LAYER_TEXT[arguments[4]]}</div>` : '';
       return `${lbl ? lbl.name : ''}${mark}` +
              (probable ? '<div class="sub">вероятно собрано (не найдено на месте) — клик: подтвердить</div>' : '') +
-             (rg ? `<div class="sub">${rg.name}</div>` : '');
+             lay + (rg ? `<div class="sub">${rg.name}</div>` : '');
     }
 
     function addMarker(pid, x, y, labelId, area) {
       const collected = COLLECTED.has(pid), probable = PROBABLE.has(pid);
-      const m = L.marker(toLatLng(x, y), { icon: makeIcon(labelId, collected, probable) });
-      m.bindTooltip(tipText(labelId, collected, area, probable),
+      const layer = (pointInfo.get(pid) || [])[4] || 0;
+      const m = L.marker(toLatLng(x, y), { icon: makeIcon(labelId, collected, probable, layer) });
+      m.bindTooltip(tipText(labelId, collected, area, probable, layer),
                     { className: 'gm-tip', direction: 'top', offset: [0, -10] });
       m.on('click', () => openCard(pid));
       m.on('contextmenu', () => { if (bridge) bridge.on_marker_clicked(pid); });   // быстрая отметка
@@ -732,6 +748,8 @@
       if (lastPlayer) dist = ` · ${Math.round(Math.hypot(x - lastPlayer.x, y - lastPlayer.y))} ед. от тебя`;
       let h = `<div class="card-h"><img src="${iconUrl(labelId)}" onerror="this.remove()">${esc(lbl.name || '')}</div>` +
               `<div class="card-sub">${rg ? esc(rg.name) : ''}${gems}${dist}</div>`;
+      const layer = pointInfo.get(pid)[4] || 0;
+      if (LAYER_TEXT[layer]) h += `<div class="card-layer">${LAYER_TEXT[layer]}</div>`;
       h += prob ? '<div class="card-st prob">❔ вероятно собрано (не найдено на месте)</div>'
          : got ? '<div class="card-st ok">✓ собрано</div>' : '<div class="card-st">не собрано</div>';
       // действия — сразу под статусом, чтобы не листать к ним
@@ -930,6 +948,7 @@
       pid = String(pid);
       if (!pointInfo.get(pid)) return;
       if (!(opts && opts.fromRoute)) stopRoute();       // ручная цель — маршрут сбрасываем
+      if (navPid !== pid) navPath = null;              // новый путь придёт из Python
       navPid = pid;
       closeCard();
       const [x, y, labelId] = pointInfo.get(pid);
@@ -941,8 +960,37 @@
       else map.setView(toLatLng(x, y), Math.max(map.getZoom(), 0));
     };
 
+    // путь по местности (строит Python, A*)
+    let navPath = null;
+    window.setNavPath = function (pts) { navPath = pts && pts.length > 1 ? pts : null; updateNav(); };
+    function pathNearest(p, x, y) {
+      let bi = 0, bd = Infinity;
+      for (let i = 0; i < p.length - 1; i++) {
+        const [ax, ay] = p[i], [bx, by] = p[i + 1], vx = bx - ax, vy = by - ay;
+        const t = Math.max(0, Math.min(1, ((x - ax) * vx + (y - ay) * vy) / ((vx * vx + vy * vy) || 1e-9)));
+        const d = Math.hypot(x - (ax + t * vx), y - (ay + t * vy));
+        if (d < bd) { bd = d; bi = i; }
+      }
+      return bi;
+    }
+    function pathLookahead(p, x, y, ahead) {
+      const i0 = pathNearest(p, x, y);
+      let cur = [x, y], rest = 0, target = null;
+      for (let j = i0 + 1; j < p.length; j++) {
+        const seg = Math.hypot(p[j][0] - cur[0], p[j][1] - cur[1]);
+        if (!target && rest + seg >= ahead) {
+          const k = (ahead - rest) / (seg || 1e-9);
+          target = [cur[0] + (p[j][0] - cur[0]) * k, cur[1] + (p[j][1] - cur[1]) * k];
+        }
+        rest += seg; cur = p[j];
+      }
+      const t = target || p[p.length - 1];
+      return { x: t[0], y: t[1], rest };
+    }
+
     function clearTarget() {
       navPid = null;
+      navPath = null;
       if (navLine) { map.removeLayer(navLine); navLine = null; }
       document.getElementById('nav').classList.remove('on', 'here');
       stopRoute();
@@ -956,7 +1004,8 @@
       const [x, y, labelId] = pointInfo.get(navPid);
       const left = route ? route.filter(pid => !COLLECTED.has(pid)).length : 0;
       bridge.on_target_changed(JSON.stringify({
-        pid: navPid, x, y, name: (labelById[labelId] || {}).name || '', left }));
+        pid: navPid, x, y, name: (labelById[labelId] || {}).name || '', left,
+        layer: pointInfo.get(navPid)[4] || 0 }));
     }
 
     // ---------- Маршрут по несобранным сундукам региона ----------
@@ -1067,13 +1116,19 @@
         document.getElementById('nav-txt').textContent = `${name} — включи отслеживание позиции`;
         return;
       }
-      const dx = x - lastPlayer.x, dy = y - lastPlayer.y;
-      const d = Math.hypot(dx, dy);
+      let dx = x - lastPlayer.x, dy = y - lastPlayer.y;
+      let d = Math.hypot(dx, dy);
+      if (navPath && navPath.length > 1 && d >= 12) {        // по пути: к точке впереди
+        const la = pathLookahead(navPath, lastPlayer.x, lastPlayer.y, 35);
+        dx = la.x - lastPlayer.x; dy = la.y - lastPlayer.y; d = Math.max(d, la.rest);
+      }
       const ang = (Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360;   // 0 = север (вверх)
       nav.querySelector('.arrow').textContent = d < 12 ? '📍' : ARROWS[Math.round(ang / 45) % 8];
       nav.classList.toggle('here', d < 12);
       document.getElementById('nav-txt').textContent = d < 12 ? `${name} — ты на месте` : `${name} — ${Math.round(d)} ед.`;
-      const pts = [toLatLng(lastPlayer.x, lastPlayer.y), toLatLng(x, y)];
+      const pts = navPath && navPath.length > 1
+        ? [toLatLng(lastPlayer.x, lastPlayer.y)].concat(navPath.slice(pathNearest(navPath, lastPlayer.x, lastPlayer.y) + 1).map(p => toLatLng(p[0], p[1])))
+        : [toLatLng(lastPlayer.x, lastPlayer.y), toLatLng(x, y)];
       if (!navLine) navLine = L.polyline(pts, { color: '#58a6ff', weight: 3, opacity: .9,
                                                 className: 'gm-nav-line', interactive: false }).addTo(map);
       else navLine.setLatLngs(pts);
@@ -1229,7 +1284,7 @@
       REGIONS.forEach(r => regionById[r.id] = r);
       for (const lid in POINTS_BY_LABEL) {
         const n = Number(lid);
-        for (const p of POINTS_BY_LABEL[lid]) pointInfo.set(String(p[0]), [p[1], p[2], n, p[3]]);
+        for (const p of POINTS_BY_LABEL[lid]) pointInfo.set(String(p[0]), [p[1], p[2], n, p[3], p[4] || 0]);
       }
       document.getElementById('mapname').textContent = META.name || 'Карта';
       document.title = META.name || document.title;

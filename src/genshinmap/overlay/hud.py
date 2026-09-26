@@ -56,7 +56,8 @@ class NavHud(QWidget):
                             | Qt.WindowType.WindowDoesNotAcceptFocus)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
-        self.target: dict | None = None      # {pid, x, y, name, left}
+        self.target: dict | None = None      # {pid, x, y, name, left, layer}
+        self.path: list[tuple[float, float]] = []   # путь по местности (A*)
         self.player: tuple[float, float] | None = None
         self.minimap_frac: dict = {}
         self.tip_text = ""
@@ -72,6 +73,10 @@ class NavHud(QWidget):
             self.tip_text, self.photo, self._photo_url, self._stage = "", None, "", 0
         self.target = target
         self._refresh()
+
+    def set_path(self, path: list) -> None:
+        self.path = list(path)
+        self.update()
 
     def set_player(self, x: float, y: float) -> None:
         self.player = (x, y)
@@ -142,8 +147,16 @@ class NavHud(QWidget):
         cx = (f["left"] + f["width"] / 2) * w
         cy = (f["top"] + f["height"] / 2) * h
         r = min(f["width"] * w, f["height"] * h) / 2
-        dx = self.target["x"] - self.player[0]
-        dy = self.target["y"] - self.player[1]
+        # по пути: стрелка на точку пути впереди, расстояние — остаток пути
+        if self.path:
+            from ..navigation import lookahead
+
+            (ax, ay), rest, _ = lookahead(self.path, *self.player)
+            d = max(d, rest) if d > HERE_UNITS else d
+            dx, dy = ax - self.player[0], ay - self.player[1]
+        else:
+            dx = self.target["x"] - self.player[0]
+            dy = self.target["y"] - self.player[1]
         ang = math.atan2(dy, dx)                      # экранные оси: x вправо, y вниз
         here = d <= HERE_UNITS
         color = QColor("#3fb950") if here else QColor("#ffd24a")
@@ -162,6 +175,9 @@ class NavHud(QWidget):
 
         # подпись: расстояние / «на месте» + сколько осталось по маршруту
         label = "🧰 на месте" if here else f"🧰 {d:.0f}"
+        layer = {1: " · 🕳 в пещере", 2: " · 🌊 под водой", 3: " · ⬇ нижний уровень"}.get(
+            self.target.get("layer") or 0, "")
+        label += layer
         if self.target.get("left"):
             label += f"  · осталось {self.target['left']}"
         font = QFont("Segoe UI", 11, QFont.Weight.Bold)
