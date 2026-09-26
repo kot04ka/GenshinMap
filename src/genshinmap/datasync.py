@@ -11,6 +11,8 @@
     data/maps/<id>/labels.json     категории
     data/maps/<id>/points.json     точки [id, label_id, x, y, area_id]
     data/maps/<id>/appsample.json  точка HoYoLAB -> метка appsample (для советов)
+    data/maps/<id>/anchors.json    названия мест [[имя, x, y, уровень 1|2], ...]
+    data/maps/<id>/anchors_en.json то же по-английски (labels.json: name_en, group_en)
     assets/maps/<id>/icons/<label_id>.png
 """
 from __future__ import annotations
@@ -124,8 +126,17 @@ def fetch_map(map_id: int, log: Log = print) -> dict:
     new_ids = {p["id"] for p in points}
 
     _write_json(data_dir / "meta.json", meta, indent=2)
+    try:
+        add_english_names(map_id, labels)
+    except Exception as e:  # noqa: BLE001 — без английских имён работает русский интерфейс
+        log(f"  английские названия не скачались: {e}")
     _write_json(data_dir / "labels.json", labels)
     _write_json(data_dir / "points.json", points)
+    try:
+        _write_json(data_dir / "anchors.json", fetch_anchors(map_id))
+        _write_json(data_dir / "anchors_en.json", fetch_anchors(map_id, "en-us"))
+    except Exception as e:  # noqa: BLE001 — без названий мест карта работает
+        log(f"  названия мест не скачались: {e}")
 
     # иконки категорий (только новые)
     used = {p["label_id"] for p in points}
@@ -142,6 +153,40 @@ def fetch_map(map_id: int, log: Log = print) -> dict:
     log(f"  {name}: точек {len(points)} (+{added} / -{removed}), категорий {len(labels)}")
     return {"id": map_id, "name": name, "has_tiles": True, "points": len(points),
             "added": added, "removed": removed, "version_changed": old_version != meta["map_version"]}
+
+
+def add_english_names(map_id: int, labels: list[dict]) -> None:
+    """Дописать в категории name_en / group_en (для английского интерфейса)."""
+    tree = _get_json(f"{BASE}/label/tree?map_id={map_id}&app_sn={APP_SN}&lang=en-us")["data"]["tree"]
+    en: dict[int, tuple[str, str]] = {}
+    for group in tree:
+        for child in group.get("children", []):
+            en[child["id"]] = (child.get("name", "").replace("\u00a0", " ").strip(),
+                               group.get("name", "").replace("\u00a0", " ").strip())
+    for l in labels:
+        name, group = en.get(l["id"], ("", ""))
+        if name:
+            l["name_en"] = name
+        if group:
+            l["group_en"] = group
+
+
+def fetch_anchors(map_id: int, lang: str = LANG) -> list[list]:
+    """Названия мест (районы и места внутри них) с центрами рамок."""
+    data = _get_json(f"{BASE}/map_anchor/list?map_id={map_id}&app_sn={APP_SN}&lang={lang}")["data"]
+    out: list[list] = []
+
+    def add(a: dict, level: int) -> None:
+        name = (a.get("name") or "").strip()
+        if name:
+            out.append([name, round((a["l_x"] + a["r_x"]) / 2, 1),
+                        round((a["l_y"] + a["r_y"]) / 2, 1), level])
+        for ch in a.get("children") or []:
+            add(ch, 2)
+
+    for a in data.get("list") or []:
+        add(a, 1)
+    return out
 
 
 def update_index(entries: list[dict]) -> None:

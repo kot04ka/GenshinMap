@@ -137,6 +137,11 @@
     #lightbox.on { display: flex; }
     #lightbox img { max-width: 100%; max-height: 100%; border-radius: 8px; box-shadow: 0 10px 40px #000; }
     .card-btns { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+    .route-clip { margin-top: 8px; border-radius: 8px; overflow: hidden; position: relative;
+      border: 1px solid var(--line, #26314a); background: #0a0e16; cursor: zoom-in; }
+    .route-clip img { display: block; width: 100%; height: auto; }
+    .route-clip span { position: absolute; left: 6px; bottom: 6px; font-size: 11px; font-weight: 600;
+      background: rgba(10,14,22,.8); color: #e6ecf6; padding: 2px 7px; border-radius: 6px; }
     .card-btns button { flex: 1 1 auto; font: inherit; font-size: 12.5px; font-weight: 600;
       padding: 8px 10px; min-height: 34px; border-radius: 8px; cursor: pointer; color: var(--text);
       background: #1c2740; border: 1px solid #2c3956; }
@@ -147,10 +152,16 @@
       display: none; background: rgba(58,42,8,.93); border: 1px solid var(--warn); color: #ffe7b0;
       border-radius: 10px; padding: 7px 12px; font-size: 12px; line-height: 1.4; }
     #lost.on { display: block; }
+    #maptip { position: absolute; top: 54px; left: calc(var(--panel-w) + 12px); right: 60px; z-index: 951;
+      display: none; background: rgba(14,32,60,.95); border: 1px solid var(--accent); color: #d6e6ff;
+      border-radius: 10px; padding: 7px 12px; font-size: 12px; line-height: 1.4; }
+    #maptip.on { display: block; }
+    body.compact #maptip { top: 6px; left: 8px; right: 8px; font-size: 11px; }
     body.compact #lost { top: 6px; left: 8px; right: 8px; font-size: 11px; }
 
     /* ---------- Навигация к цели ---------- */
-    #nav { position: absolute; left: calc(var(--panel-w) + 50%); transform: translateX(-50%);
+    #nav { position: absolute; left: calc(var(--panel-w) + (100% - var(--panel-w)) / 2);
+      transform: translateX(-50%); width: max-content; max-width: calc(100% - var(--panel-w) - 32px);
       bottom: 16px; z-index: 950; display: none; align-items: center; gap: 10px;
       background: rgba(14,20,32,.95); border: 1px solid var(--accent-soft); border-radius: 999px;
       padding: 6px 8px 6px 14px; font-size: 12.5px; box-shadow: 0 6px 20px rgba(0,0,0,.5); }
@@ -159,6 +170,18 @@
     #nav .arrow { display: inline-block; font-size: 16px; color: var(--accent); }
     #nav button { background: none; border: none; color: var(--text-mut); cursor: pointer; font-size: 14px; }
     #nav button:hover { color: #ff9aa5; }
+    #nav button { min-width: 28px; min-height: 28px; border-radius: 8px; }
+    #nav #nav-skip { display: none; color: #cfd8ea; }
+    #nav.route #nav-skip { display: inline-block; }
+    #nav #nav-skip:hover { color: var(--accent); background: rgba(88,166,255,.12); }
+    #nav.tp { border-color: #b58cff; }
+    #nav.tp .arrow { color: #b58cff; }
+    /* номера точек маршрута */
+    .gm-rnum { transform: translate(-50%, -175%); min-width: 18px; height: 18px; padding: 0 4px;
+      border-radius: 9px; background: rgba(10,14,22,.88); border: 1px solid #8ea1c2; color: #e6ecf6;
+      font: 700 10.5px/16px 'Segoe UI', sans-serif; text-align: center; pointer-events: none; }
+    .gm-rnum.cur { background: #ffd24a; border-color: #3a2a00; color: #1a1300; }
+    .gm-rnum.under { border-color: #d29922; border-style: dashed; }
     body.compact #nav { left: 50%; bottom: 8px; font-size: 11.5px; }
     .gm-nav-line { stroke-dasharray: 8 8; animation: dash 1s linear infinite; }
     @keyframes dash { to { stroke-dashoffset: -16; } }
@@ -201,6 +224,19 @@
     .gm-region-lbl small { display: block; text-align: center; font-size: 10.5px;
       letter-spacing: .3px; text-transform: none; color: #b9c6df; font-weight: 600; }
     .hide-region-labels .gm-region-lbl { display: none; }
+
+    /* названия мест (HoYoLAB): районы — на среднем приближении, места — ближе */
+    .gm-anchor { transform: translate(-50%, -50%); width: max-content; pointer-events: none;
+      color: #f1e6c8; font-weight: 700; font-size: 12.5px; letter-spacing: .4px; white-space: nowrap;
+      text-shadow: 0 0 3px #000, 0 1px 2px #000, 0 0 8px rgba(0,0,0,.8); display: none; }
+    .gm-anchor.l2 { font-size: 11px; font-weight: 600; color: #d9dfeb; font-style: italic; }
+    .show-a1 .gm-anchor.l1, .show-a2 .gm-anchor.l2 { display: block; }
+
+    /* где остались сундуки */
+    .gm-heat { border-radius: 50%; display: flex; align-items: center; justify-content: center;
+      transform: translate(-50%, -50%); font: 700 11px/1 'Segoe UI', sans-serif; color: #fff;
+      background: radial-gradient(circle, rgba(255,140,40,.85) 0%, rgba(255,90,30,.45) 60%, rgba(255,90,30,0) 100%);
+      text-shadow: 0 1px 2px #000; cursor: pointer; }
 
     /* тёмные тултипы */
     .leaflet-tooltip.gm-tip {
@@ -395,9 +431,11 @@
   </div>
   <div id="lightbox" title="Закрыть"><img alt=""></div>
   <div id="sheet"><button class="sheet-x" title="Закрыть">✕</button><div id="sheet-body"></div></div>
+  <div id="maptip"></div>
   <div id="lost" title="Позиция вернётся сама, когда мини-карта снова совпадёт с картой">📍 Позиция не найдена: подземелье или многоуровневая зона (такого уровня нет на карте HoYoLAB), меню или загрузка. Точка — последнее известное место.</div>
   <div id="nav"><span class="arrow">➤</span><span id="nav-txt"></span>
-    <button id="nav-x" title="Перестать вести">✕</button></div>
+    <button id="nav-skip" title="Пропустить эту точку маршрута">⏭</button>
+    <button id="nav-x" title="Перестать вести (Ctrl+Alt+X)">✕</button></div>
   <div id="loading"><div class="spinner"></div><div>Загрузка карты…</div></div>
 
   <script src="vendor/leaflet.js"></script>
@@ -414,6 +452,9 @@
     const groupEls = {};          // имя группы -> {el, cb, cnt, labels:[id]}
     const markerLayer = L.layerGroup();
     const regionLayer = L.layerGroup();
+    const anchorLayer = L.layerGroup();
+    const heatLayer = L.layerGroup();
+    let ANCHORS = [], heatOn = false;
     let bridge = null, map = null;
     let hideCollected = false;
     let activeRegion = null;      // area_id или null (весь мир)
@@ -470,9 +511,13 @@
 
       // подписи регионов — отдельная панель ПОВЕРХ иконок (иначе их не прочесть)
       map.createPane('regionPane').style.zIndex = 650;
+      map.createPane('anchorPane').style.zIndex = 450;   // названия мест — под иконками
       markerLayer.addTo(map);
       regionLayer.addTo(map);
+      anchorLayer.addTo(map);
+      map.on('zoomend', () => { if (heatOn) drawHeat(); });
       buildRegionLabels();
+      buildAnchors();
       map.on('zoomend', updateRegionLabels);
       map.on('click', () => document.getElementById('sheet').classList.remove('on'));
       map.on('contextmenu', e => {
@@ -539,6 +584,48 @@
       highlightRegionChip();
     }
 
+    function buildAnchors() {
+      anchorLayer.clearLayers();
+      for (const [name, x, y, lvl] of ANCHORS) {
+        L.marker(toLatLng(x, y), { interactive: false, keyboard: false, pane: 'anchorPane',
+          icon: L.divIcon({ className: '', iconSize: [0, 0],
+            html: `<div class="gm-anchor l${lvl}">${esc(name)}</div>` }) }).addTo(anchorLayer);
+      }
+      updateRegionLabels();
+    }
+
+    // «где остались сундуки»: несобранные сундуки по клеткам, размер — сколько их
+    const HEAT_CELL_PX = 90;          // размер ячейки на экране: кружки не налезают
+    function drawHeat() {
+      heatLayer.clearLayers();
+      if (!heatOn) return;
+      const a = map.latLngToLayerPoint(toLatLng(0, 0)), b = map.latLngToLayerPoint(toLatLng(1000, 0));
+      const cell = HEAT_CELL_PX / (Math.abs(b.x - a.x) / 1000 || 1);   // в мировых единицах
+      const cells = new Map();
+      for (const [pid, [x, y, labelId]] of pointInfo) {
+        if (COLLECTED.has(pid) || !isChestLabel(labelId)) continue;
+        const k = `${Math.floor(x / cell)},${Math.floor(y / cell)}`;
+        const c = cells.get(k) || { n: 0, sx: 0, sy: 0 };
+        c.n++; c.sx += x; c.sy += y; cells.set(k, c);
+      }
+      for (const c of cells.values()) {
+        const size = Math.round(Math.min(HEAT_CELL_PX * 0.9, 20 + 6 * Math.sqrt(c.n)));
+        const m = L.marker(toLatLng(c.sx / c.n, c.sy / c.n), { keyboard: false,
+          icon: L.divIcon({ className: '', iconSize: [0, 0],
+            html: `<div class="gm-heat" style="width:${size}px;height:${size}px">${c.n}</div>` }) });
+        m.bindTooltip(`Несобранных сундуков: ${c.n}`, { direction: 'top', className: 'gm-tip' });
+        m.on('click', () => map.setView(m.getLatLng(), Math.max(map.getZoom() + 1.5, map.getMinZoom() + 2.5)));
+        m.addTo(heatLayer);
+      }
+    }
+    window.toggleHeat = function () {
+      heatOn = !heatOn;
+      if (heatOn) heatLayer.addTo(map); else map.removeLayer(heatLayer);
+      drawHeat();
+      alertNav(heatOn ? '🔥 Показано, где остались сундуки (цифра — сколько)' : 'Тепловая карта скрыта');
+      if (clearOpen) document.getElementById('sheet-body').innerHTML = clearHtml();
+    };
+
     function buildRegionLabels() {
       regionLayer.clearLayers();
       REGIONS.forEach(r => {
@@ -557,8 +644,12 @@
     function updateRegionLabels() {
       if (!map) return;
       // подписи нужны только на отдалении, когда виден весь мир
-      const far = map.getZoom() <= map.getMinZoom() + 1.25;
-      document.getElementById('map').classList.toggle('hide-region-labels', !far);
+      const z = map.getZoom(), zmin = map.getMinZoom();
+      const far = z <= zmin + 1.25;
+      const el = document.getElementById('map');
+      el.classList.toggle('hide-region-labels', !far);
+      el.classList.toggle('show-a1', !far && z < zmin + 3);
+      el.classList.toggle('show-a2', z >= zmin + 2.5);
     }
 
     function selectRegion(id, opts) {
@@ -735,6 +826,7 @@
         cardPopup.setLatLng(toLatLng(info[0], info[1])).setContent(cardHtml(pid)).openOn(map);
       }
       if (!cardInfo[pid] && bridge && bridge.request_point_info) bridge.request_point_info(pid);
+      if (!COLLECTED.has(pid) && routeClips[pid] === undefined) loadRouteClip(pid);
     }
 
     function cardHtml(pid) {
@@ -757,9 +849,10 @@
       h += got && !prob ? `<button onclick="cardToggle('${pid}')">↶ Снять отметку</button>`
                         : `<button class="primary" onclick="cardToggle('${pid}')">✓ ${prob ? 'Подтвердить' : 'Собрано'}</button>`;
       h += `<button onclick="setTarget('${pid}')">🧭 Вести сюда</button>`;
-      if (d && d.video) h += `<button onclick="openExt('${esc(d.video)}')">▶ Видео</button>`;
+      if (!routeClips[pid]) h += `<button onclick="loadRouteClip('${pid}')">▶ Как пройти</button>`;
       if (isCustom(pid)) h += `<button onclick="deleteCustom('${pid}')">🗑 Удалить точку</button>`;
       h += '</div>';
+      h += routeClipHtml(pid);
       if (d && d.custom) {
         return h + '<div class="card-muted">⭐ Своя точка: этого объекта нет на карте HoYoLAB.</div>';
       }
@@ -844,7 +937,8 @@
              `<span class="v">${st[1]}/${st[0]}${extra}</span></div>` +
              `<div class="clr-bar"><i style="width:${(100 * st[1] / st[0]).toFixed(1)}%"></i></div>`;
       }
-      h += '<div class="card-btns"><button class="primary" onclick="startRoute()">🗺 Маршрут по сундукам</button></div>';
+      h += '<div class="card-btns"><button class="primary" onclick="startRoute()">🗺 Маршрут по сундукам</button>' +
+           `<button onclick="toggleHeat()">${heatOn ? '🔥 Скрыть «где остались»' : '🔥 Где остались сундуки'}</button></div>`;
       h += '<div class="tips-h">Показать на карте (собранное скрыто)</div><div class="card-btns">' +
            `<button onclick="showKinds(['chest'])">💎 Сундуки</button>` +
            `<button onclick="showKinds(['valuable'])">🔮 Окулусы</button>` +
@@ -924,6 +1018,25 @@
     };
 
     window.showPointInfo = function (pid, data) { cardInfo[String(pid)] = data || {}; refreshCard(pid); };
+
+    // анимация «как пройти»: путь от ближайшего телепорта (или от тебя) — делает Python
+    const routeClips = {};          // pid -> 'loading' | url | ''
+    window.loadRouteClip = function (pid) {
+      pid = String(pid);
+      if (routeClips[pid] && routeClips[pid] !== '') return;
+      routeClips[pid] = 'loading';
+      refreshCard(pid);
+      if (bridge && bridge.request_route_clip) bridge.request_route_clip(pid);
+    };
+    window.showRouteClip = function (pid, url) { routeClips[String(pid)] = url; refreshCard(pid); };
+    function routeClipHtml(pid) {
+      const c = routeClips[pid];
+      if (c === undefined) return '';
+      if (c === 'loading') return '<div class="card-muted">▶ Рисую путь от ближайшего телепорта…</div>';
+      if (!c) return '<div class="card-muted">Анимацию пути сделать не удалось (нет сети?)</div>';
+      return `<div class="route-clip" title="Открыть крупно" onclick="showPhoto('${esc(c)}')">` +
+             `<img src="${esc(c)}" alt=""><span>▶ Как пройти</span></div>`;
+    }
     window.openExt = function (url) { if (bridge && bridge.open_url) bridge.open_url(url); };
     window.cardToggle = function (pid) {
       if (bridge) bridge.on_marker_clicked(String(pid));
@@ -991,62 +1104,147 @@
     function clearTarget() {
       navPid = null;
       navPath = null;
+      tpHint = null;
+      caveVia = caveInside = null;
       if (navLine) { map.removeLayer(navLine); navLine = null; }
-      document.getElementById('nav').classList.remove('on', 'here');
+      if (tpLine) { map.removeLayer(tpLine); tpLine = null; }
+      document.getElementById('nav').classList.remove('on', 'here', 'tp');
       stopRoute();
       reportTarget();
     }
+    window.clearTarget = clearTarget;          // хоткей «перестать вести» из Python
 
     // цель -> Python (HUD поверх игры: стрелка у мини-карты, подсказка, звук)
     function reportTarget() {
       if (!bridge || !bridge.on_target_changed) return;
       if (!navPid) { bridge.on_target_changed(''); return; }
       const [x, y, labelId] = pointInfo.get(navPid);
-      const left = route ? route.filter(pid => !COLLECTED.has(pid)).length : 0;
+      const st = routeStep();
       bridge.on_target_changed(JSON.stringify({
-        pid: navPid, x, y, name: (labelById[labelId] || {}).name || '', left,
-        layer: pointInfo.get(navPid)[4] || 0 }));
+        pid: navPid, x, y, name: (labelById[labelId] || {}).name || '',
+        left: st ? st[1] - st[0] + 1 : 0, step: st,
+        layer: pointInfo.get(navPid)[4] || 0,
+        tp: tpHint ? { x: tpHint.x, y: tpHint.y, name: tpHint.name } : null,
+        via: caveVia ? { x: caveVia.x, y: caveVia.y } : null }));
+    }
+
+    // ---------- Телепорты: куда можно прыгнуть ----------
+    // Открытыми считаем телепорты и статуи, отмеченные как активированные.
+    const TP_PENALTY = 110;      // «цена» телепорта в единицах пути (загрузка, выход)
+    const WALK_K = 1.25;         // путь по местности длиннее прямой
+    let NAV_OPTS = { autoNext: true, useTp: true };
+    window.setNavOptions = function (o) { NAV_OPTS = Object.assign(NAV_OPTS, o || {}); tpCache = null; };
+    let tpCache = null, tpCacheT = 0;
+    function openTps() {
+      const now = Date.now();
+      if (NAV_OPTS.useTp === false) return [];
+      if (tpCache && now - tpCacheT < 5000) return tpCache;
+      const out = [];
+      for (const [pid, [x, y, labelId]] of pointInfo) {
+        const l = labelById[labelId];
+        if (l && (l.kind === 'teleport' || l.kind === 'statue') && COLLECTED.has(pid)) out.push([pid, x, y, l.kind]);
+      }
+      tpCache = out; tpCacheT = now;
+      return out;
+    }
+    function nearestTp(x, y, tps) {
+      let best = null, bd = Infinity;
+      for (const t of tps) {
+        const d = Math.hypot(t[1] - x, t[2] - y);
+        if (d < bd) { bd = d; best = t; }
+      }
+      return best ? { pid: best[0], x: best[1], y: best[2], kind: best[3], d: bd } : null;
+    }
+    // подпись телепорта — ближайшее название места
+    function placeName(x, y) {
+      let best = '', bd = Infinity;
+      for (const [name, ax, ay, lvl] of ANCHORS) {
+        const d = Math.hypot(ax - x, ay - y) * (lvl === 2 ? 1 : 1.6);
+        if (d < bd) { bd = d; best = name; }
+      }
+      return bd < 900 ? best : '';
+    }
+    // как добраться от (sx, sy) до (x, y): пешком или ТП + пешком — что дешевле
+    function legPlan(sx, sy, x, y, tps) {
+      const walk = WALK_K * Math.hypot(x - sx, y - sy);
+      const tp = nearestTp(x, y, tps);
+      if (tp && TP_PENALTY + WALK_K * tp.d < walk) return { tp, cost: TP_PENALTY + WALK_K * tp.d };
+      return { tp: null, cost: walk };
     }
 
     // ---------- Маршрут по несобранным сундукам региона ----------
-    let route = null, routeLine = null;
+    let route = null, routeSkipped = new Set(), routeLine = null, routeTpLine = null, routeMarks = null;
+    let tpHint = null, tpLine = null, caveVia = null, caveInside = null;
+    // вход в пещеру для цели под землёй/под водой: ближайшая метка «Пещера» рядом с целью
+    const CAVE_MAX = 300;       // дальше — это уже вход в другую пещеру
+    const CAVE_REACHED = 15;    // дошёл до входа — дальше ведём к самой цели
+    function caveEntry(x, y) {
+      let best = null, bd = CAVE_MAX;
+      for (const [pid, [cx, cy, labelId]] of pointInfo) {
+        const l = labelById[labelId];
+        if (!l || l.kind !== 'cave') continue;
+        const d = Math.hypot(cx - x, cy - y);
+        if (d < bd) { bd = d; best = { pid, x: cx, y: cy, d }; }
+      }
+      return best;
+    }
 
     function isChestLabel(labelId) {
       const l = labelById[labelId];
-      return !!l && /сундук/i.test(l.name);
+      return !!l && l.kind === 'chest';
     }
 
-    // ближайший сосед + 2-opt: короткий обход без петель
-    function planRoute(sx, sy, ids) {
-      const P = ids.map(pid => pointInfo.get(pid));
-      const n = ids.length, used = new Array(n).fill(false), order = [];
-      let cx = sx, cy = sy;
+    // Порядок обхода: ближайший сосед + 2-opt по НАСТОЯЩЕЙ цене участка
+    // (пешком или телепорт к ближайшему открытому ТП — что выгоднее).
+    function planRoute(sx, sy, ids, tps) {
+      const P = ids.map(pid => pointInfo.get(pid)), n = ids.length;
+      const dtp = P.map(p => { const t = nearestTp(p[0], p[1], tps); return t ? t.d : Infinity; });
+      const cost = (i, j) => {
+        const a = i < 0 ? [sx, sy] : P[i], b = P[j];
+        return Math.min(WALK_K * Math.hypot(b[0] - a[0], b[1] - a[1]), TP_PENALTY + WALK_K * dtp[j]);
+      };
+      const used = new Array(n).fill(false);
+      let order = [], cur = -1;
       for (let k = 0; k < n; k++) {
-        let bi = -1, bd = Infinity;
-        for (let i = 0; i < n; i++) {
-          if (used[i]) continue;
-          const d = Math.hypot(P[i][0] - cx, P[i][1] - cy);
-          if (d < bd) { bd = d; bi = i; }
-        }
-        used[bi] = true; order.push(bi); cx = P[bi][0]; cy = P[bi][1];
+        let bi = -1, bc = Infinity;
+        for (let i = 0; i < n; i++) if (!used[i]) { const c = cost(cur, i); if (c < bc) { bc = c; bi = i; } }
+        used[bi] = true; order.push(bi); cur = bi;
       }
-      const pt = i => (i < 0 ? [sx, sy] : P[order[i]]);
-      const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
-      for (let pass = 0, improved = true; improved && pass < 40; pass++) {
+      // 2-opt: разворот участка i..j. Цена несимметрична (телепорт считается к точке
+      // назначения), поэтому внутренние участки тоже пересчитываем — накопительно, O(1) на пару.
+      for (let pass = 0, improved = true; improved && pass < 8; pass++) {
         improved = false;
         for (let i = 0; i < n - 1; i++) {
+          const prev = i === 0 ? -1 : order[i - 1];
+          let inBefore = 0, inAfter = 0;
           for (let j = i + 1; j < n; j++) {
-            const a = pt(i - 1), b = pt(i), c = pt(j), d = j + 1 < n ? pt(j + 1) : null;
-            const before = dist(a, b) + (d ? dist(c, d) : 0);
-            const after = dist(a, c) + (d ? dist(b, d) : 0);
-            if (after + 1e-6 < before) {
-              order.splice(i, j - i + 1, ...order.slice(i, j + 1).reverse());
+            inBefore += cost(order[j - 1], order[j]);
+            inAfter += cost(order[j], order[j - 1]);
+            const next = j + 1 < n ? order[j + 1] : null;
+            const before = cost(prev, order[i]) + inBefore + (next === null ? 0 : cost(order[j], next));
+            const after = cost(prev, order[j]) + inAfter + (next === null ? 0 : cost(order[i], next));
+            if (after < before - 1e-6) {
+              const seg = order.slice(i, j + 1).reverse();
+              order.splice(i, seg.length, ...seg);
               improved = true;
+              inBefore = inAfter = 0;
+              for (let k = i + 1; k <= j; k++) {           // пересчёт накоплений после разворота
+                inBefore += cost(order[k - 1], order[k]);
+                inAfter += cost(order[k], order[k - 1]);
+              }
             }
           }
         }
       }
       return order.map(i => ids[i]);
+    }
+
+    function routeLeft() { return route ? route.filter(pid => !COLLECTED.has(pid) && !routeSkipped.has(pid)) : []; }
+    // [номер текущей точки, всего] — для плашки и HUD
+    function routeStep() {
+      if (!route || !navPid) return null;
+      const i = route.indexOf(navPid);
+      return i < 0 ? null : [i + 1, route.length];
     }
 
     window.startRoute = function () {
@@ -1059,39 +1257,101 @@
         if (d < bd) { bd = d; area = a; }
       }
       if (activeRegion !== null && activeRegion !== area) selectRegion(area, { noFly: true });
+      // только включённые на карте виды сундуков (выключил «Деревянный с морой» — его нет)
+      const shown = LABELS.some(l => l.kind === 'chest' && enabled.has(l.id));
       const ids = [];
       for (const [pid, [, , labelId, a]] of pointInfo)
-        if (a === area && isChestLabel(labelId) && !COLLECTED.has(pid)) ids.push(pid);
+        if (a === area && isChestLabel(labelId) && !COLLECTED.has(pid) && (!shown || enabled.has(labelId))) ids.push(pid);
       if (!ids.length) { alertNav('В этом регионе все сундуки собраны 🎉'); return; }
-      route = planRoute(lastPlayer.x, lastPlayer.y, ids);
-      drawRoute();
+      tpCache = null;
+      const tps = openTps();
+      route = planRoute(lastPlayer.x, lastPlayer.y, ids, tps);
+      if (NAV_OPTS.useTp !== false && tps.length < 3)
+        showMapTip('🌀 Отметь на карте открытые телепорты (клик по значку → «Собрано») — маршрут начнёт '
+                   + 'предлагать прыжки и станет короче.', 9000);
+      routeSkipped = new Set();
       document.getElementById('mb-route').classList.add('on');
+      document.getElementById('nav').classList.add('route');
       setTarget(route[0], { fromRoute: true });
+      drawRoute();
     };
 
     function stopRoute() {
       if (!route) return;
       route = null;
-      if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
+      routeSkipped = new Set();
+      for (const l of [routeLine, routeTpLine, routeMarks]) if (l) map.removeLayer(l);
+      routeLine = routeTpLine = routeMarks = null;
       document.getElementById('mb-route').classList.remove('on');
+      document.getElementById('nav').classList.remove('route');
     }
 
+    // Линия маршрута: пешие участки — пунктир, прыжки телепортом — фиолетовым от ТП;
+    // номера следующих точек (как в списке задач).
+    const ROUTE_NUMBERS = 40;
+    const LAYER_ICON = { 1: '🕳', 2: '🌊', 3: '⬇' };
+    const LAYER_SHORT = { 1: ' · 🕳 в пещере', 2: ' · 🌊 под водой', 3: ' · ⬇ нижний уровень' };
     function drawRoute() {
       if (!route) return;
-      const pts = route.filter(pid => !COLLECTED.has(pid)).map(pid => {
-        const [x, y] = pointInfo.get(pid); return toLatLng(x, y);
+      const tps = openTps();
+      const left = routeLeft();
+      const walk = [], jumps = [];
+      let prev = lastPlayer ? [lastPlayer.x, lastPlayer.y] : null;
+      for (const pid of left) {
+        const [x, y] = pointInfo.get(pid);
+        if (prev) {
+          const lp = legPlan(prev[0], prev[1], x, y, tps);
+          if (lp.tp) jumps.push([toLatLng(lp.tp.x, lp.tp.y), toLatLng(x, y)]);
+          else walk.push([toLatLng(prev[0], prev[1]), toLatLng(x, y)]);
+        }
+        prev = [x, y];
+      }
+      if (!routeLine) routeLine = L.polyline(walk, { color: '#8ea1c2', weight: 2, opacity: .75,
+                                                     dashArray: '4 8', interactive: false }).addTo(map);
+      else routeLine.setLatLngs(walk);
+      if (!routeTpLine) routeTpLine = L.polyline(jumps, { color: '#b58cff', weight: 2.5, opacity: .9,
+                                                         dashArray: '2 6', interactive: false }).addTo(map);
+      else routeTpLine.setLatLngs(jumps);
+      if (routeMarks) map.removeLayer(routeMarks);
+      routeMarks = L.layerGroup();
+      left.slice(0, ROUTE_NUMBERS).forEach(pid => {
+        const [x, y] = pointInfo.get(pid);
+        const k = route.indexOf(pid) + 1;
+        const lay = LAYER_ICON[(pointInfo.get(pid) || [])[4] || 0] || '';
+        L.marker(toLatLng(x, y), { interactive: false, keyboard: false, pane: 'regionPane',
+          icon: L.divIcon({ className: '', iconSize: [0, 0],
+            html: `<div class="gm-rnum${pid === navPid ? ' cur' : ''}${lay ? ' under' : ''}">${k}${lay}</div>` }) }).addTo(routeMarks);
       });
-      if (!routeLine) routeLine = L.polyline(pts, { color: '#8ea1c2', weight: 2, opacity: .7,
-                                                    dashArray: '4 8', interactive: false }).addTo(map);
-      else routeLine.setLatLngs(pts);
+      routeMarks.addTo(map);
     }
 
-    // цель маршрута собрана — к следующей
+    // цель маршрута собрана (или пропущена) — к следующей
     function advanceRoute() {
-      const next = route.find(pid => !COLLECTED.has(pid));
-      drawRoute();
-      if (next) setTarget(next, { fromRoute: true, noFit: true });
+      const next = routeLeft()[0];
+      if (next) { setTarget(next, { fromRoute: true, noFit: true }); drawRoute(); }
       else { alertNav('Маршрут пройден: все сундуки региона собраны 🎉'); clearTarget(); }
+    }
+    window.skipRoutePoint = function () {
+      if (!route || !navPid) return;
+      routeSkipped.add(navPid);
+      advanceRoute();
+    };
+
+    // цель-сундук собрана без маршрута — сразу ведём к ближайшему следующему
+    // (выключается в ⚙ Настройках: «Вести к следующему сундуку сам»)
+    const CHAIN_MAX = 450;
+    function chainNext() {
+      const done = pointInfo.get(navPid);
+      if (!NAV_OPTS.autoNext || !lastPlayer || !done || !isChestLabel(done[2])) return false;
+      let best = null, bd = CHAIN_MAX;
+      for (const [pid, [x, y, labelId]] of pointInfo) {
+        if (COLLECTED.has(pid) || !enabled.has(labelId) || !isChestLabel(labelId)) continue;
+        const d = Math.hypot(x - lastPlayer.x, y - lastPlayer.y);
+        if (d < bd) { bd = d; best = pid; }
+      }
+      if (!best) return false;
+      setTarget(best, { noFit: true });
+      return true;
     }
 
     function alertNav(text) {
@@ -1101,19 +1361,68 @@
       setTimeout(() => { if (!navPid) nav.classList.remove('on'); }, 4000);
     }
     document.getElementById('nav-x').onclick = clearTarget;
+    document.getElementById('nav-skip').onclick = () => window.skipRoutePoint();
 
     function updateNav() {
       if (!navPid) return;
       if (COLLECTED.has(navPid) && !PROBABLE.has(navPid)) {
-        if (route) advanceRoute(); else clearTarget();
+        if (route) advanceRoute(); else if (!chainNext()) clearTarget();
         return;
       }
       const [x, y, labelId] = pointInfo.get(navPid);
       const nav = document.getElementById('nav');
       const name = (labelById[labelId] || {}).name || '';
+      const st = routeStep();
+      const prefix = st ? `[${st[0]}/${st[1]}] ` : '';
+      const layerTxt = LAYER_SHORT[pointInfo.get(navPid)[4] || 0] || '';
       nav.classList.add('on');
       if (!lastPlayer) {
-        document.getElementById('nav-txt').textContent = `${name} — включи отслеживание позиции`;
+        document.getElementById('nav-txt').textContent = `${prefix}${name} — включи отслеживание позиции`;
+        return;
+      }
+      // далеко, а открытый телепорт рядом с целью — подсказываем прыжок
+      const lp = legPlan(lastPlayer.x, lastPlayer.y, x, y, openTps());
+      const hint = lp.tp ? { pid: lp.tp.pid, x: lp.tp.x, y: lp.tp.y, d: lp.tp.d,
+                             name: placeName(lp.tp.x, lp.tp.y) } : null;
+      if ((hint && hint.pid) !== (tpHint && tpHint.pid)) { tpHint = hint; reportTarget(); }
+      tpHint = hint;
+      nav.classList.toggle('tp', !!hint);
+      if (hint) {
+        if (navLine) { map.removeLayer(navLine); navLine = null; }
+        const pts = [toLatLng(hint.x, hint.y), toLatLng(x, y)];
+        if (!tpLine) tpLine = L.polyline(pts, { color: '#b58cff', weight: 3, opacity: .95,
+                                                className: 'gm-nav-line', interactive: false }).addTo(map);
+        else tpLine.setLatLngs(pts);
+        nav.querySelector('.arrow').textContent = '🌀';
+        nav.classList.remove('here');
+        document.getElementById('nav-txt').textContent =
+          `${prefix}ТП${hint.name ? ' у «' + hint.name + '»' : ''} → ${name} · ${Math.round(hint.d)} ед. от ТП${layerTxt}`;
+        return;
+      }
+      if (tpLine) { map.removeLayer(tpLine); tpLine = null; }
+      // под землёй/под водой: сначала ко входу в пещеру (пока не дошёл до него)
+      const lay = pointInfo.get(navPid)[4] || 0;
+      let via = null;
+      if ((lay === 1 || lay === 2) && caveInside !== navPid) {
+        const e = caveEntry(x, y);
+        if (e && Math.hypot(e.x - lastPlayer.x, e.y - lastPlayer.y) <= CAVE_REACHED) caveInside = navPid;
+        else via = e;
+      }
+      if ((via && via.pid) !== (caveVia && caveVia.pid)) { caveVia = via; reportTarget(); }
+      caveVia = via;
+      if (via) {
+        const dv = Math.hypot(via.x - lastPlayer.x, via.y - lastPlayer.y);
+        const ang = (Math.atan2(via.x - lastPlayer.x, -(via.y - lastPlayer.y)) * 180 / Math.PI + 360) % 360;
+        nav.querySelector('.arrow').textContent = ARROWS[Math.round(ang / 45) % 8];
+        nav.classList.remove('here');
+        document.getElementById('nav-txt').textContent =
+          `${prefix}🕳 К входу в пещеру · ${Math.round(dv)} ед. (${name} внутри, ~${Math.round(via.d)} ед. от входа)`;
+        const vpts = navPath && navPath.length > 1
+          ? [toLatLng(lastPlayer.x, lastPlayer.y)].concat(navPath.slice(pathNearest(navPath, lastPlayer.x, lastPlayer.y) + 1).map(p => toLatLng(p[0], p[1])), [toLatLng(x, y)])
+          : [toLatLng(lastPlayer.x, lastPlayer.y), toLatLng(via.x, via.y), toLatLng(x, y)];
+        if (!navLine) navLine = L.polyline(vpts, { color: '#58a6ff', weight: 3, opacity: .9,
+                                                   className: 'gm-nav-line', interactive: false }).addTo(map);
+        else navLine.setLatLngs(vpts);
         return;
       }
       let dx = x - lastPlayer.x, dy = y - lastPlayer.y;
@@ -1125,7 +1434,8 @@
       const ang = (Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360;   // 0 = север (вверх)
       nav.querySelector('.arrow').textContent = d < 12 ? '📍' : ARROWS[Math.round(ang / 45) % 8];
       nav.classList.toggle('here', d < 12);
-      document.getElementById('nav-txt').textContent = d < 12 ? `${name} — ты на месте` : `${name} — ${Math.round(d)} ед.`;
+      document.getElementById('nav-txt').textContent =
+        prefix + (d < 12 ? `${name} — ты на месте` : `${name} — ${Math.round(d)} ед.`) + layerTxt;
       const pts = navPath && navPath.length > 1
         ? [toLatLng(lastPlayer.x, lastPlayer.y)].concat(navPath.slice(pathNearest(navPath, lastPlayer.x, lastPlayer.y) + 1).map(p => toLatLng(p[0], p[1])))
         : [toLatLng(lastPlayer.x, lastPlayer.y), toLatLng(x, y)];
@@ -1152,7 +1462,7 @@
       let best = null, bd = Infinity;
       for (const [pid, [x, y, labelId]] of pointInfo) {
         const lbl = labelById[labelId];
-        if (!lbl || !/сундук/i.test(lbl.name) || COLLECTED.has(pid)) continue;
+        if (!lbl || lbl.kind !== 'chest' || COLLECTED.has(pid)) continue;
         const d = Math.hypot(x - lastPlayer.x, y - lastPlayer.y);
         if (d < bd) { bd = d; best = pid; }
       }
@@ -1219,6 +1529,7 @@
         region: activeRegion,
         hide_collected: hideCollected,
         follow: follow,
+        compact: document.body.classList.contains('compact'),
       }));
     }, 400);
 
@@ -1273,13 +1584,70 @@
       if (!silent) { renderVisible(); reportState(); }
     }
 
+    // --- Язык интерфейса: русский исходный, английский — словарём из Python ---
+    let UI_LANG = 'ru', I18N = null, I18N_RX = null, i18nObserver = null;
+    const CYR = /[А-Яа-яЁё]/;
+    function trText(s) {
+      if (!I18N || !s || !CYR.test(s)) return s;
+      const core = s.trim();
+      if (I18N[core] !== undefined) return s.replace(core, I18N[core]);
+      return s.replace(I18N_RX, m => I18N[m]);
+    }
+    window.tr = trText;
+    // пишем только изменившийся текст: запись того же значения снова будит наблюдатель
+    function setText(n) {
+      const v = n.nodeValue;
+      if (!v || !CYR.test(v)) return;
+      const t = trText(v);
+      if (t !== v) n.nodeValue = t;
+    }
+    function translateTree(root) {
+      if (!I18N || !root) return;
+      if (root.nodeType === 3) { setText(root); return; }
+      if (root.nodeType !== 1) return;
+      for (const a of ['title', 'placeholder', 'alt']) {
+        const v = root.getAttribute && root.getAttribute(a);
+        if (v && CYR.test(v)) { const t = trText(v); if (t !== v) root.setAttribute(a, t); }
+      }
+      const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+      for (let n = w.nextNode(); n; n = w.nextNode()) {
+        if (n.nodeType === 3) setText(n);
+        else for (const a of ['title', 'placeholder', 'alt']) {
+          const v = n.getAttribute(a);
+          if (v && CYR.test(v)) { const t = trText(v); if (t !== v) n.setAttribute(a, t); }
+        }
+      }
+    }
+    function setLang(lang, table) {
+      UI_LANG = lang || 'ru';
+      document.documentElement.lang = UI_LANG;
+      if (UI_LANG === 'ru' || !table) return;
+      I18N = table;
+      const keys = Object.keys(table).filter(k => k.length >= 2).sort((a, b) => b.length - a.length);
+      const esc_ = k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      I18N_RX = new RegExp('(?<![А-Яа-яЁё])(?:' + keys.map(esc_).join('|') + ')(?![А-Яа-яЁё])', 'g');
+      document.title = trText(document.title);
+      translateTree(document.body);
+      i18nObserver = new MutationObserver(muts => {
+        for (const m of muts) {
+          if (m.type === 'characterData') translateTree(m.target);
+          else if (m.type === 'attributes') translateTree(m.target);
+          else m.addedNodes.forEach(translateTree);
+        }
+      });
+      i18nObserver.observe(document.body, { childList: true, subtree: true, characterData: true,
+                                           attributes: true, attributeFilter: ['title', 'placeholder'] });
+    }
+
     // --- Построение карты из бандла mapdata_<id>.js ---
     function loadData(payload) {
       const d = (typeof payload === 'string') ? JSON.parse(payload) : payload;
+      if (d.ui && d.ui.lang !== UI_LANG) setLang(d.ui.lang, d.ui.table);
       META = d.meta;
       LABELS = d.labels;
       POINTS_BY_LABEL = d.points_by_label;
       REGIONS = d.regions || [];
+      ANCHORS = d.anchors || [];
       LABELS.forEach(l => labelById[l.id] = l);
       REGIONS.forEach(r => regionById[r.id] = r);
       for (const lid in POINTS_BY_LABEL) {
@@ -1353,7 +1721,7 @@
       LABELS.forEach(l => { (groups[l.group] = groups[l.group] || []).push(l); });
       const names = Object.keys(groups).sort((a, b) => {
         const ia = GROUP_ORDER.indexOf(a), ib = GROUP_ORDER.indexOf(b);
-        return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b, 'ru');
+        return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b, UI_LANG);
       });
       const box = document.getElementById('cats');
       box.innerHTML = '';
@@ -1365,7 +1733,8 @@
         gcb.title = 'Включить/выключить всю группу';
         gcb.onclick = e => e.stopPropagation();
         gcb.onchange = () => setGroup(gname, gcb.checked);
-        const gname_el = document.createElement('span'); gname_el.className = 'g-name'; gname_el.textContent = gname;
+        const gname_el = document.createElement('span'); gname_el.className = 'g-name';
+        gname_el.textContent = items[0].group_label || gname;
         const gcnt = document.createElement('span'); gcnt.className = 'g-cnt';
         h.insertAdjacentHTML('beforeend', CHEV);
         h.append(gname_el, gcnt, gcb);
@@ -1460,6 +1829,7 @@
 
     // прогресс «собрано %» на чипах регионов и на подписях карты
     function updateRegionProgress() {
+      if (heatOn) drawHeat();
       if (!REGIONS.length) return;
       const tot = {}, got = {};
       for (const lid of enabled) {
@@ -1503,18 +1873,36 @@
     window.enableCategory = enableCategory;
     window.applyState = applyState;
     window.setPlayer = setPlayer;
-    window.setLostHint = function (on) { document.getElementById('lost').classList.toggle('on', !!on); };
+    window.setLostHint = function (on, text) {
+      const el = document.getElementById('lost');
+      if (text) el.textContent = text;
+      el.classList.toggle('on', !!on);
+    };
+    // короткая подсказка сверху карты (синяя), сама прячется
+    window.showMapTip = function (text, ms) {
+      const el = document.getElementById('maptip');
+      el.textContent = text;
+      el.classList.add('on');
+      clearTimeout(el._t);
+      el._t = setTimeout(() => el.classList.remove('on'), ms || 7000);
+    };
     window.clearPlayer = clearPlayer;
     window.highlightPoint = highlightPoint;
     window.setMaxMarkers = function (n) { MAX_MARKERS = Math.max(100, n | 0); renderVisible(); };
-    window.setCompact = function (on) {
+    // мини-режим: свой масштаб (запоминает Python); выход — вернуть вид обычного окна
+    let normalView = null;
+    window.setCompact = function (on, zoom) {
+      const was = document.body.classList.contains('compact');
+      if (on && !was && map) normalView = { c: map.getCenter(), z: map.getZoom() };
       document.body.classList.toggle('compact', !!on);
       if (!on) document.getElementById('sheet').classList.remove('on');
       followWanted = !!on;
       clearTimeout(followTimer); followTimer = null;
       if (map) setTimeout(() => {
         map.invalidateSize();
+        if (on && typeof zoom === 'number') map.setZoom(zoom, { animate: false });
         if (on && lastPlayer) setFollow(true);    // мини-режим — сразу за игроком
+        if (!on && was && normalView) { map.setView(normalView.c, normalView.z, { animate: false }); normalView = null; }
       }, 50);
     };
 

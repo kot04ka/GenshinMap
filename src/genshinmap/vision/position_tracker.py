@@ -65,6 +65,19 @@ CALIBRATE_OK = 0.55         # с какого score доверяем найде�
 MIN_MARGIN = 0.05           # отрыв лучшего кандидата от второго (иначе место
                             # неоднозначно: пустыня, море, снег — везде «похоже»)
 DISTINCT_WORLD = 80         # кандидаты ближе этого (мир. ед.) — одно и то же место
+# «Память места»: однообразная местность (Натлан, лес) даёт соседей с почти тем же
+# score — отрыва нет, хотя место верное. Если кандидат рядом с недавней позицией,
+# верим ему и без отрыва.
+HINT_RADIUS = 300           # мир. ед. от последней известной позиции
+HINT_AGE_S = 120            # насколько свежей должна быть последняя позиция
+HINT_OK = 0.52              # минимальный score такого кандидата
+# После телепорта игрок почти всегда у телепорта/статуи — их проверяем первыми
+# (сотни маленьких окон — доли секунды вместо секунд полного поиска).
+ANCHOR_RADIUS = 45          # мир. ед. вокруг точки телепорта
+ANCHOR_OK = 0.55
+RECENT_S = 20.0             # позиция была столько секунд назад — ищем рядом шире
+RECENT_RADIUS = 160         # мир. ед.
+RECENT_OK = 0.52
 ICON_HALF_1080 = 9          # полуразмер значка на мини-карте (px при высоте 1080)
 ICON_VIEW_FRAC = 0.40       # значки дальше этой доли стороны от центра — у края, не смотрим
 ICON_ARROW_FRAC = 0.07      # ближе — под стрелкой игрока, не смотрим
@@ -80,6 +93,7 @@ class Position:
     local: bool = False   # найдено локальным трекингом (а не глобальным поиском)
     margin: float = 1.0   # отрыв от второго кандидата (для глобального поиска)
     water: bool = False   # найдено по форме воды (запасной способ)
+    anchor: bool = False  # найдено у телепорта/статуи (после телепорта)
 
     @property
     def reliable(self) -> bool:
@@ -230,6 +244,12 @@ class PositionTracker:
         self.water = None
         if water_path is not None and Path(water_path).exists():
             self.set_water(Path(water_path))
+        self.anchors: list[tuple[float, float]] = []    # телепорты/статуи текущей карты
+        self._verified: list[Position] = []
+
+    def set_anchors(self, points: list[tuple[float, float]]) -> None:
+        """Точки, где игрок оказывается после телепорта (телепорты, статуи)."""
+        self.anchors = list(points)
 
     def set_water(self, water_path: Path) -> None:
         """Подключить маску воды карты (запасной поиск по форме береговой линии)."""
@@ -341,10 +361,55 @@ class PositionTracker:
         if not verified:
             return None
         verified.sort(key=lambda p: p.score, reverse=True)
+        self._verified = verified
         best = verified[0]
         other = next((p.score for p in verified[1:]
                       if math.hypot(p.x - best.x, p.y - best.y) > DISTINCT_WORLD), 0.0)
         best.margin = best.score - other
+        return best
+
+    def locate_anchors(self, sq: np.ndarray) -> Position | None:
+        """Быстрый поиск у телепортов и статуй (после телепорта)."""
+        if not self.anchors:
+            return None
+        found: list[Position] = []
+        for s in self._scales() or KNOWN_SCALES:
+            t = self._tmpl(sq, s, 1.0)
+            if t is None:
+                continue
+            half_extra = int(ANCHOR_RADIUS * self.ref_scale) + t.shape[0] // 2 + 1
+            for ax, ay in self.anchors:
+                cx, cy = self._world_to_ref(ax, ay)
+                x0, y0 = int(cx - half_extra), int(cy - half_extra)
+                x1, y1 = int(cx + half_extra), int(cy + half_extra)
+                if x0 < 0 or y0 < 0 or x1 > self.fine.shape[1] or y1 > self.fine.shape[0]:
+                    continue
+                res = cv2.matchTemplate(self.fine[y0:y1, x0:x1], t, cv2.TM_CCOEFF_NORMED)
+                _, val, _, loc = cv2.minMaxLoc(res)
+                if val >= ANCHOR_OK - 0.1:
+                    x, y = self._ref_to_world(x0 + loc[0] + t.shape[1] / 2, y0 + loc[1] + t.shape[0] / 2)
+                    found.append(Position(round(x, 1), round(y, 1), float(val), s, anchor=True))
+        if not found:
+            return None
+        found.sort(key=lambda p: p.score, reverse=True)
+        best = found[0]
+        other = next((p.score for p in found[1:]
+                      if math.hypot(p.x - best.x, p.y - best.y) > DISTINCT_WORLD), 0.0)
+        best.margin = best.score - other
+        if best.score < ANCHOR_OK:
+            best.margin = min(best.margin, MIN_MARGIN - 0.01)       # не надёжно
+        return best
+
+    def _near_hint(self, hint: tuple[float, float, float] | None) -> Position | None:
+        """Лучший кандидат глобального поиска рядом с недавней позицией."""
+        if hint is None or hint[2] > HINT_AGE_S:
+            return None
+        near = [p for p in self._verified
+                if math.hypot(p.x - hint[0], p.y - hint[1]) <= HINT_RADIUS and p.score >= HINT_OK]
+        if not near:
+            return None
+        best = max(near, key=lambda p: p.score)
+        best.margin = max(best.margin, MIN_MARGIN)                   # место подтверждает память
         return best
 
     # ---------- запасной поиск по форме воды ----------
@@ -415,16 +480,34 @@ class PositionTracker:
             best.margin = min(best.margin, MIN_MARGIN - 0.01)   # не надёжно
         return best
 
-    def locate(self, minimap_gray: np.ndarray, screen_h: int = BASE_HEIGHT,
-               minimap_bgr: np.ndarray | None = None) -> Position | None:
-        """Позиция игрока по кадру мини-карты (None — не удалось).
-
-        Если игрок недавно был найден — сначала локальный поиск вокруг него
-        (миллисекунды); глобальный — только если потеряли (телепорт, загрузка).
-        """
+    def prep(self, minimap_gray: np.ndarray, screen_h: int = BASE_HEIGHT) -> np.ndarray | None:
+        """Квадрат мини-карты для поиска или None (пустой/чёрный кадр)."""
         sq = self._prep(minimap_gray, screen_h)
         if sq.shape[0] < 16 or float(sq.std()) < 4.0:   # пустой/чёрный кадр (загрузка, меню)
             return None
+        return sq
+
+    def locate(self, minimap_gray: np.ndarray, screen_h: int = BASE_HEIGHT,
+               minimap_bgr: np.ndarray | None = None) -> Position | None:
+        """Позиция игрока по кадру мини-карты (None — не удалось): быстрая часть,
+        затем медленная, затем принятие результата. Сервис позиции вызывает части
+        по отдельности — медленную в фоне, чтобы не останавливать остальное."""
+        sq = self.prep(minimap_gray, screen_h)
+        if sq is None:
+            return None
+        pos = self.locate_fast(sq, screen_h, minimap_bgr)
+        if pos is None:
+            hint = None
+            if self.last is not None:
+                hint = (self.last.x, self.last.y, time.monotonic() - self.last_t)
+            pos = self.locate_slow(sq, screen_h, minimap_bgr, hint)
+        if pos is not None and pos.reliable:
+            self.accept(pos)
+        return pos
+
+    def locate_fast(self, sq: np.ndarray, screen_h: int,
+                    minimap_bgr: np.ndarray | None = None) -> Position | None:
+        """Трекинг рядом с прошлой позицией (миллисекунды) или None."""
         pos = None
         # в неразведанных местах (прошлую позицию нашли по воде) — сначала вода рядом
         if (minimap_bgr is not None and self.water is not None and self.last is not None
@@ -440,10 +523,29 @@ class PositionTracker:
                     pos.local = True
                     break
                 pos = None
-        if pos is None:
-            # порядок по цене: яркость на известных масштабах (с) -> форма воды (доли с)
-            # -> изредка широкий перебор масштабов (самое медленное)
+        # потеряли недавно (поиск шёл в фоне, игрок мог отбежать) — окно шире, порог строже
+        age = time.monotonic() - self.last_t if self.last else 1e9
+        if pos is None and self.last and self.scale and age < RECENT_S:
+            for s in self._scales():
+                pos = self._search_window(sq, self.last.x, self.last.y, RECENT_RADIUS, (s,))
+                if pos and pos.score >= RECENT_OK:
+                    pos.local = True
+                    break
+                pos = None
+        return pos
+
+    def locate_slow(self, sq: np.ndarray, screen_h: int, minimap_bgr: np.ndarray | None = None,
+                    hint: tuple[float, float, float] | None = None) -> Position | None:
+        """Поиск, когда игрок потерян (секунды). hint — (x, y, возраст с) последней
+        известной позиции. Сам ничего не запоминает — результат принимает accept()."""
+        # у телепортов — доли секунды: после телепорта это почти всегда оно
+        pos = self.locate_anchors(sq)
+        if pos is None or not pos.reliable:
+            # порядок по цене: яркость на известных масштабах (с) -> память места ->
+            # форма воды (доли с) -> изредка широкий перебор масштабов (самое медленное)
             pos = self.locate_global(sq)
+            if pos is not None and not pos.reliable:
+                pos = self._near_hint(hint) or pos
             if (pos is None or not pos.reliable) and minimap_bgr is not None:
                 wpos = self.locate_water(minimap_bgr, screen_h)
                 if wpos is not None and wpos.reliable:
@@ -454,8 +556,10 @@ class PositionTracker:
                     swept = self.locate_global(sq, sweep=True)
                     if swept is not None and (pos is None or swept.score > pos.score):
                         pos = swept
-        if pos is None:
-            return None
+        return pos
+
+    def accept(self, pos: Position) -> None:
+        """Надёжная позиция: запомнить (дальше — быстрый трекинг вокруг неё)."""
         if pos.reliable:
             self._global_fails = 0
             self.last, self.last_t = pos, time.monotonic()
@@ -463,7 +567,6 @@ class PositionTracker:
                 self.scale = pos.scale     # масштаб найден — дальше ищем только с ним
             elif self.scale and abs(pos.scale - self.scale) / self.scale > SCALE_SWITCH:
                 self.scale = pos.scale     # игра приблизила/отдалила мини-карту (город)
-        return pos
 
     # ---------- значки на мини-карте ----------
     def icon_presence(self, minimap_gray: np.ndarray, screen_h: int, pos: Position,

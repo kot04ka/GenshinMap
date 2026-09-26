@@ -21,6 +21,34 @@ import numpy as np
 THRESHOLD = 0.78
 SCALES = (0.92, 1.0, 1.08)
 
+# В русской версии подсказка у сундука — его название: «F ▶ Богатый сундук».
+# По слову редкости понимаем, какой именно сундук перед игроком.
+RARITY = ("обычн", "богат", "драгоц", "роскош", "удивит")
+# английский клиент: «Exquisite Chest» -> та же основа, что у русских категорий
+RARITY_EN = {"common": "обычн", "exquisite": "богат", "precious": "драгоц",
+             "luxurious": "роскош", "remarkable": "удивит"}
+_LAT = str.maketrans("aeopcxmkbtyh", "аеорсхмквтун")   # OCR путает латиницу и кириллицу
+
+
+def norm_text(text: str) -> str:
+    return text.lower().replace("ё", "е").translate(_LAT)
+
+
+def parse_prompt_lines(lines: list[str], lang: str = "ru") -> dict:
+    """Строки OCR области подсказок -> {"open": 1.0, "rarity": "богат"}, если среди
+    подсказок есть сундук, иначе {}. rarity — "" для особых сундуков."""
+    if lang == "en":
+        for raw in lines:
+            t = raw.lower()
+            if "chest" in t:
+                return {"open": 1.0, "rarity": next((v for k, v in RARITY_EN.items() if k in t), "")}
+        return {}
+    for raw in lines:
+        t = norm_text(raw)
+        if "сундук" in t or "сундy" in t:
+            return {"open": 1.0, "rarity": next((r for r in RARITY if r in t), "")}
+    return {}
+
 
 @dataclass
 class PromptTemplate:

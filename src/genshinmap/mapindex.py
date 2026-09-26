@@ -27,7 +27,12 @@ class MapIndex:
         self.by_label: dict[int, list[tuple[int, float, float]]] = {}
         # point_id -> (label_id, x, y)
         self.by_id: dict[str, tuple[int, float, float]] = {}
+        # point_id -> уровень: 0 поверхность, 1 пещера, 2 под водой, 3 нижний уровень;
+        # точки на «этажах» (floor) тоже считаем не поверхностью
+        self.layer_of: dict[str, int] = {}
         for p in points:
+            if p.get("layer") or p.get("floor"):
+                self.layer_of[str(p["id"])] = int(p.get("layer") or 3)
             self.by_label.setdefault(p["label_id"], []).append((p["id"], p["x"], p["y"]))
             self.by_id[str(p["id"])] = (p["label_id"], p["x"], p["y"])
 

@@ -24,6 +24,9 @@ DEFAULT_SETTINGS: dict = {
         "toggle_overlay": "<ctrl>+<alt>+o",
         "toggle_visible": "<ctrl>+<alt>+h",
         "bookmark": "<ctrl>+<alt>+b",
+        "undo": "<ctrl>+<alt>+z",
+        "stop_nav": "<ctrl>+<alt>+x",
+        "toggle_hud": "<ctrl>+<alt>+g",
     },
     "max_markers": 1200,
     "overlay_opacity": 0.9,
@@ -67,6 +70,19 @@ DEFAULT_SETTINGS: dict = {
     "auto_record": True,
     # HUD навигации поверх игры (стрелка у мини-карты, подсказка, звук) — тест
     "hud_enabled": True,
+    # что рисовать поверх игры (каждое можно выключить)
+    "hud_path": True,          # путь на мини-карте
+    "hud_compass": True,       # компас вверху экрана
+    "hud_card": True,          # карточка с подсказкой и фото у цели
+    "hud_toasts": True,        # всплывашки «отмечено»
+    "hud_sounds": True,        # звуки «близко / на месте»
+    "auto_next": True,         # собрал сундук — вести к следующему самому
+    "absence_mark": True,      # сундука нет во второй заход — считать собранным
+    "route_teleports": True,   # маршрут может предлагать телепорты
+    "onboarded": False,        # окно первого запуска уже показано
+    # язык интерфейса и язык игры (что читает OCR: «Получено», подсказки у сундука)
+    "ui_lang": "ru",
+    "game_lang": "ru",
     # аккаунт, чей прогресс сейчас активен (UID читается с экрана игры; None — ещё не видели)
     "active_uid": None,
     # запускать приложение с правами администратора (как Genshin) — см. main.py

@@ -30,6 +30,9 @@ DEFAULT_HOTKEYS = {
     "toggle_overlay": "<ctrl>+<alt>+o",
     "toggle_visible": "<ctrl>+<alt>+h",
     "bookmark": "<ctrl>+<alt>+b",
+    "undo": "<ctrl>+<alt>+z",
+    "stop_nav": "<ctrl>+<alt>+x",
+    "toggle_hud": "<ctrl>+<alt>+g",
 }
 
 # --- Win32 ---
@@ -111,8 +114,12 @@ class HotkeyManager(QObject):
     toggleOverlay = pyqtSignal()
     toggleVisible = pyqtSignal()
     bookmark = pyqtSignal()        # закладка в записи отладки («вот тут подобрал»)
+    undo = pyqtSignal()            # снять последнюю авто-отметку
+    stopNav = pyqtSignal()         # перестать вести (цель/маршрут)
+    toggleHud = pyqtSignal()       # скрыть/показать всё поверх игры
 
-    ACTIONS = ("mark_nearest", "toggle_overlay", "toggle_visible", "bookmark")
+    ACTIONS = ("mark_nearest", "toggle_overlay", "toggle_visible", "bookmark", "undo",
+               "stop_nav", "toggle_hud")
 
     def __init__(self, hotkeys: dict | None = None) -> None:
         super().__init__()
@@ -133,6 +140,9 @@ class HotkeyManager(QObject):
             "toggle_overlay": self.toggleOverlay,
             "toggle_visible": self.toggleVisible,
             "bookmark": self.bookmark,
+            "undo": self.undo,
+            "stop_nav": self.stopNav,
+            "toggle_hud": self.toggleHud,
         }[action]
 
     def start(self) -> None:

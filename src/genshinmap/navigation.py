@@ -169,6 +169,20 @@ class NavGrid:
         return []
 
 
+def nearest_index(path: list[tuple[float, float]], x: float, y: float) -> int:
+    """Индекс начала отрезка ломаной, ближайшего к точке."""
+    best_i, best_d = 0, math.inf
+    for i in range(len(path) - 1):
+        ax, ay = path[i]
+        bx, by = path[i + 1]
+        vx, vy = bx - ax, by - ay
+        t = max(0.0, min(1.0, ((x - ax) * vx + (y - ay) * vy) / (vx * vx + vy * vy or 1e-9)))
+        d = math.hypot(x - (ax + t * vx), y - (ay + t * vy))
+        if d < best_d:
+            best_i, best_d = i, d
+    return best_i
+
+
 def lookahead(path: list[tuple[float, float]], x: float, y: float,
               ahead: float = 35.0) -> tuple[tuple[float, float], float, float]:
     """(точка пути впереди на ahead ед., остаток пути, отклонение игрока от пути)."""

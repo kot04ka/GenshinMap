@@ -39,6 +39,10 @@ PROMPT_RECENT_S = 3.0 # подсказка «Открыть» должна бы�
 CHEST_NEAR = 12       # в этом радиусе подсказка относится к сундуку
 CHEST_CLOSE = 6       # вплотную: если тут долго нет подсказки — сундука нет
 ABSENT_S = 4.0        # сколько стоять вплотную без подсказки, чтобы решить «нет»
+# Сундуки, которые появляются только после условия (загадка, испытание) — их
+# отсутствие ничего не значит, по «нет на месте» не отмечаем.
+CONDITIONAL_GROUPS = ("Сокровища с загадкой",)
+CONDITIONAL_NAMES = ("3 сундука",)
 
 # Окулусы/ценности: значок на мини-карте (оценка 0..1 из PositionTracker).
 ICON_PRESENT = 0.8    # выше — значок есть
@@ -50,12 +54,16 @@ WATCH_RADIUS = 170    # за значками каких точек следим
 VALUABLE_OCR_NEAR = 40  # окулус «Получено» сверяем с точками в этом радиусе
 
 
-def name_stem(name: str) -> str:
+def name_stem(name: str, lang: str = "ru") -> str:
     """Основа названия для сверки с OCR: всё первое слово без окончания
-    множественного числа: «Геокулы» -> «геокул», «Анемокулы» -> «анемокул».
+    множественного числа: «Геокулы» -> «геокул», «Анемокулы» -> «анемокул»;
+    по-английски «Anemoculi» -> «anemocul» (в «Получено» — «Anemoculus»).
     Короче нельзя: «анемо» совпало бы с «Печать Анемо» из сундука."""
     word = name.lower().replace("ё", "е").split()[0] if name.strip() else ""
-    if word.endswith(("ы", "и")) and len(word) > 5:
+    if lang == "en":
+        if word.endswith("i") and len(word) > 5:
+            word = word[:-1]
+    elif word.endswith(("ы", "и")) and len(word) > 5:
         word = word[:-1]
     return word if len(word) >= 5 else ""
 
@@ -110,7 +118,11 @@ class AutoMarker:
     def __init__(self, index: MapIndex, labels: list[dict], rules: dict | None = None) -> None:
         self.index = index
         self.kind_of: dict[int, str] = {}
-        self.name_of: dict[int, str] = {}
+        self.name_of: dict[int, str] = {}          # русские (логика, редкость сундука)
+        self.group_of: dict[int, str] = {l["id"]: l.get("group", "") for l in labels}
+        self.display_of: dict[int, str] = {}       # на языке интерфейса (журнал, HUD)
+        self.match_of: dict[int, str] = {}         # на языке игры (сверка с OCR)
+        self.game_lang = "ru"
         for l in labels:
             self.name_of[l["id"]] = l["name"]
             k = classify(l["name"], l.get("group", ""))
@@ -128,6 +140,7 @@ class AutoMarker:
     def register_label(self, label_id: int, name: str, kind: str) -> None:
         """Дополнительная категория (свои точки) с заданным типом."""
         self.name_of[label_id] = name
+        self.display_of[label_id] = self.match_of[label_id] = name
         self.kind_of[label_id] = kind
         if label_id not in self.labels_by_kind.get(kind, ()):
             self.labels_by_kind[kind] = self.labels_by_kind.get(kind, ()) + (label_id,)
@@ -146,7 +159,14 @@ class AutoMarker:
     def describe(self, label_id: int) -> str:
         k = self.kind_of.get(label_id)
         emoji = KINDS[k][0] if k else "✓"
-        return f"{emoji} {self.name_of.get(label_id, label_id)}"
+        name = self.display_of.get(label_id) or self.name_of.get(label_id, label_id)
+        return f"{emoji} {name}"
+
+    def set_names(self, display: dict[int, str], match: dict[int, str], game_lang: str) -> None:
+        """Имена категорий для показа и для сверки с текстом игры."""
+        self.display_of.update(display)
+        self.match_of.update(match)
+        self.game_lang = game_lang
 
     def reset(self) -> None:
         self._since.clear()
@@ -168,6 +188,22 @@ class AutoMarker:
         if not cands:
             return None
         return Action("collected", cands[0], "chest", "открыт (F)")
+
+    def chest_by_prompt(self, x: float, y: float, collected: set[str], rarity: str,
+                        radius: float = CHEST_INTERACT) -> Candidate | None:
+        """Сундук перед игроком по подсказке «F ▶ Богатый сундук»: ближайший той же
+        редкости; если такого рядом нет — просто ближайший."""
+        if "chest" not in self.rules:
+            return None
+        cands = self.index.candidates(self.labels_by_kind.get("chest", ()), x, y, collected, radius)
+        if rarity:
+            same = [c for c in cands if self._rarity_ok(c.label_id, rarity)]
+            if same:
+                return same[0]
+        return cands[0] if cands else None
+
+    def _rarity_ok(self, label_id: int, rarity: str) -> bool:
+        return self.name_of.get(label_id, "").lower().startswith(rarity)
 
     def chest_near(self, x: float, y: float, collected: set[str],
                    radius: float = CHEST_OCR_NEAR) -> Candidate | None:
@@ -201,7 +237,8 @@ class AutoMarker:
     def match_pickup(self, line: str, cands: list[Candidate]) -> Candidate | None:
         """Строка «Получено» ↔ точка рядом: «Геокул ×1» -> ближайший «Геокулы»."""
         for c in cands:                               # ближайшие первыми
-            stem = name_stem(self.name_of.get(c.label_id, ""))
+            stem = name_stem(self.match_of.get(c.label_id) or self.name_of.get(c.label_id, ""),
+                             self.game_lang)
             if stem and stem in line:
                 return c
         return None
@@ -209,7 +246,7 @@ class AutoMarker:
     def update(self, x: float, y: float, collected: set[str],
                prompts: dict | None = None, probable: set[str] | None = None,
                icons: dict | None = None, now: float | None = None,
-               valuables_by_pickup: bool = False) -> list[Action]:
+               valuables_by_pickup: bool = False, absence: bool = True) -> list[Action]:
         """Вызывать на каждую надёжную позицию. Возвращает, что сделать с точками.
 
         prompts — подсказки в кадре ({"open": 0.9}) или None (эталона нет);
@@ -223,7 +260,7 @@ class AutoMarker:
         if icons is not None and not valuables_by_pickup:
             self._icons(x, y, collected, icons, out)
         if prompts is not None and "chest" in self.rules:
-            self._chest_memory(x, y, collected, probable or set(), prompts, now, out)
+            self._chest_memory(x, y, collected, probable or set(), prompts, now, out, absence)
         return out
 
     def _touch(self, x, y, collected, icons, now, out, skip_valuable=False) -> None:
@@ -286,19 +323,33 @@ class AutoMarker:
                                   "значок пропал с мини-карты"))
                 del self._icon[pid]
 
-    def _chest_memory(self, x, y, collected, probable, prompts, now, out) -> None:
+    def absence_counts(self, point_id: str, label_id: int) -> bool:
+        """Можно ли по отсутствию подсказки у этой точки судить, что сундук собран:
+        только поверхность и только сундуки, которые стоят всегда (не после загадки)."""
+        if self.index.layer_of.get(str(point_id), 0):
+            return False                  # пещера/под водой/этаж: стоим не на том уровне
+        return (self.group_of.get(label_id, "") not in CONDITIONAL_GROUPS
+                and self.name_of.get(label_id, "") not in CONDITIONAL_NAMES)
+
+    def _chest_memory(self, x, y, collected, probable, prompts, now, out, absence=True) -> None:
         """Сундуки по подсказке «Открыть»: на месте / вероятно собран."""
         labels = self.labels_by_kind.get("chest", ())
         open_now = "open" in prompts
         near_all = self.index.candidates(labels, x, y, set(), CHEST_NEAR)
         if open_now and near_all:
-            c = near_all[0]
+            rarity = prompts.get("rarity") or ""
+            same = [c for c in near_all if rarity and self._rarity_ok(c.label_id, rarity)]
+            c = (same or near_all)[0]
             if c.point_id in probable:
                 out.append(Action("present", c, "chest", "подсказка «Открыть» — сундук на месте"))
             elif c.point_id not in collected and c.point_id not in self._seen_present:
                 self._seen_present.add(c.point_id)
                 out.append(Action("seen", c, "chest", "сундук на месте"))
-        close = [c for c in near_all if c.point_id not in collected and c.dist <= CHEST_CLOSE]
+        # «нет на месте» — только если подсказки в этой сессии точно читались (absence),
+        # только для подходящих сундуков; «вероятно собранный» — проверяем повторно
+        close = [c for c in near_all
+                 if absence and c.dist <= CHEST_CLOSE and self.absence_counts(c.point_id, c.label_id)
+                 and (c.point_id not in collected or c.point_id in probable)]
         close_ids = {c.point_id for c in close}
         for pid in list(self._chest):
             if pid not in close_ids or open_now or pid in self._seen_present:

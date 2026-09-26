@@ -124,6 +124,10 @@ class ShotCanvas(QWidget):
         self.update()
 
 
+# рамка на снимке <-> ключ настроек (доли эталонной раскладки 1920x1080, см. vision.layout)
+_KEYS = {"minimap": "minimap", "pickup": "pickup_region", "prompt": "prompt_region"}
+
+
 class CalibrationDialog(QDialog):
     # результат проверки позиции приходит из рабочего потока
     _located = pyqtSignal(object)
@@ -200,12 +204,11 @@ class CalibrationDialog(QDialog):
         btns.rejected.connect(self.reject)
         root.addWidget(btns)
 
-        # текущие значения из настроек
-        for key in ("minimap", "pickup_region"):
-            fr = settings.get(key)
-            if fr:
-                self.canvas.rects["minimap" if key == "minimap" else "pickup"] = (
-                    fr["left"], fr["top"], fr["width"], fr["height"])
+        # текущие значения из настроек (в раскладке; на снимок переводим в _set_shot)
+        self._design = {mode: settings.get(key) for mode, key in _KEYS.items()
+                        if mode != "prompt" and settings.get(key)}
+        for mode, fr in self._design.items():
+            self.canvas.rects[mode] = (fr["left"], fr["top"], fr["width"], fr["height"])
         self._located.connect(self._on_located)
 
     # ---------- снимок ----------
@@ -220,8 +223,10 @@ class CalibrationDialog(QDialog):
         QTimer.singleShot(3000, self._grab_now)
 
     def _grab_now(self) -> None:
+        from ..vision.position_service import game_rect
+
         with mss.mss() as sct:
-            shot = np.array(sct.grab(sct.monitors[1]))
+            shot = np.array(sct.grab(game_rect(sct)))     # только окно игры
         for w in reversed(self._hidden):
             w.show()
         self.raise_(); self.activateWindow()
@@ -237,9 +242,30 @@ class CalibrationDialog(QDialog):
             self._set_shot(img)
 
     def _set_shot(self, bgr: np.ndarray) -> None:
+        from ..vision.layout import ANCHORS, region_from_frac
+
+        if self.shot is not None:                 # рамки прошлого снимка -> раскладка
+            self._design.update(self._canvas_design())
         self.shot = bgr
+        h, w = bgr.shape[:2]
+        for mode, fr in self._design.items():     # раскладка -> рамки на этом снимке
+            r = region_from_frac(fr, {"left": 0, "top": 0, "width": w, "height": h},
+                                 ANCHORS[_KEYS[mode]])
+            self.canvas.rects[mode] = (r["left"] / w, r["top"] / h, r["width"] / w, r["height"] / h)
         self.canvas.set_image(_to_qimage(bgr))
         self._update_preview()
+
+    def _canvas_design(self) -> dict:
+        """Рамки на текущем снимке -> доли эталонной раскладки (для любого разрешения)."""
+        from ..vision.layout import ANCHORS, frac_from_region
+
+        if self.shot is None:
+            return {m: {"left": fr[0], "top": fr[1], "width": fr[2], "height": fr[3]}
+                    for m, fr in self.canvas.rects.items()}
+        h, w = self.shot.shape[:2]
+        return {m: frac_from_region(fr[0] * w, fr[1] * h, fr[2] * w, fr[3] * h, w, h,
+                                    ANCHORS[_KEYS[m]])
+                for m, fr in self.canvas.rects.items() if m in _KEYS}
 
     # ---------- мини-карта ----------
     def _minimap_crop(self) -> np.ndarray | None:
@@ -272,7 +298,9 @@ class CalibrationDialog(QDialog):
         if crop is None:
             self.result.setText("Сначала сделай снимок и обведи мини-карту.")
             return
-        screen_h = self.shot.shape[0]
+        from ..vision.layout import ui_scale
+
+        screen_h = 1080.0 * ui_scale(self.shot.shape[1], self.shot.shape[0])
         self.btn_test.setEnabled(False)
         self.result.setText("Ищу… (первый раз — до ~15 с: подбирается масштаб мини-карты;"
                             " если карта для позиции ещё не скачана — дольше)")
@@ -313,25 +341,24 @@ class CalibrationDialog(QDialog):
                 parent.show_player(pos)
 
     def prompt_crop(self):
-        """(вырезанная подсказка BGR, высота экрана) или None, если не обведена."""
+        """(вырезанная подсказка BGR, высота раскладки) или None, если не обведена."""
         fr = self.canvas.rects.get("prompt")
         if self.shot is None or not fr:
             return None
         h, w = self.shot.shape[:2]
         x, y = int(fr[0] * w), int(fr[1] * h)
         crop = self.shot[y:y + max(6, int(fr[3] * h)), x:x + max(6, int(fr[2] * w))]
-        return (crop.copy(), h) if crop.size else None
+        from ..vision.layout import ui_scale
+
+        return (crop.copy(), round(1080 * ui_scale(w, h))) if crop.size else None
 
     # ---------- результат ----------
     def values(self) -> dict:
         """Изменённые настройки (доли экрана + масштаб мини-карты текущей карты)."""
         out: dict = {}
-        fr = self.canvas.rects.get("minimap")
-        if fr:
-            out["minimap"] = {"left": round(fr[0], 5), "top": round(fr[1], 5),
-                              "width": round(fr[2], 5), "height": round(fr[3], 5)}
-        fr = self.canvas.rects.get("pickup")
-        if fr:
-            out["pickup_region"] = {"left": round(fr[0], 5), "top": round(fr[1], 5),
-                                    "width": round(fr[2], 5), "height": round(fr[3], 5)}
+        design = self._canvas_design()
+        for mode in ("minimap", "pickup"):
+            fr = design.get(mode)
+            if fr:
+                out[_KEYS[mode]] = {k: round(v, 5) for k, v in fr.items()}
         return out

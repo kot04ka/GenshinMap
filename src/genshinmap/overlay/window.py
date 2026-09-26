@@ -8,6 +8,7 @@ from __future__ import annotations
 import functools
 import http.server
 import json
+import math
 import os
 import socketserver
 import threading
@@ -43,10 +44,12 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from .. import i18n
 from ..automark import AutoMarker, classify
 from ..custom_points import CUSTOM_LABEL, CUSTOM_NAME, CustomPoints
 from ..datasync import DataSync
 from ..detector.process_watcher import is_genshin_running
+from ..i18n import tr
 from ..mapindex import Candidate, MapIndex
 from ..navigation import (
     NavGrid,
@@ -64,7 +67,7 @@ from ..updater import Updater
 from ..version import __version__
 from ..vision.debug_recorder import DebugRecorder
 from ..vision.detection_service import DetectionService
-from ..vision.position_service import PositionService, region_from_frac
+from ..vision.position_service import PositionService, game_rect, region_from_frac
 from ..vision.position_tracker import (
     DEFAULT_SCALE,
     REF_ZOOM,
@@ -90,6 +93,23 @@ PROMPT_MAX_AGE = 1.5      # подсказки старше этого (с) дл
 OPEN_WINDOW_S = 6.0         # после F у сундука столько ждём плашку открытия
 INTERACT_POS_AGE = 10.0     # позиция для F: последняя известная за столько секунд
 CHEST_MARK_RADIUS = 15      # сундук открыт там, где стоял игрок: дальше — это другой сундук
+CHEST_PROMPT_RADIUS = 22    # с подсказкой «… сундук» на экране ищем сундук чуть дальше
+PROMPT_READ_RADIUS = 30     # у любого сундука ближе этого читаем подсказки (OCR)
+PROMPT_GONE_READS = 2       # подсказка сундука пропала на столько чтений подряд после F…
+PROMPT_GONE_MOVE = 4        # …а игрок почти не сдвинулся — сундук открыт
+# что сейчас в игре -> (коротко для «Что я вижу», пояснение на карте или None)
+SCENES = {
+    "ok": ("в открытом мире", None),
+    "unknown_area": ("место не узнаётся",
+                     ("📍 Мини-карта видна, но место не узнаётся — пещера, подземелье или "
+                      "многоуровневая зона (их нет на карте HoYoLAB). Точка — последнее известное место.")),
+    "cutscene": ("катсцена", "🎬 Катсцена — позиция продолжится после неё."),
+    "menu": ("меню, большая карта или диалог", "📋 Меню, большая карта или диалог — жду возврата в игру."),
+    "loading": ("загрузка", "⏳ Загрузка…"),
+    "background": ("игра не активна", "⏸ Игра свёрнута или не в фокусе — позиция на паузе."),
+    "no_game": ("игра не запущена", None),
+}
+CAVE_ENTRY_NAMES = ("Пещера", "Подводная пещера")
 # относительный путь от web/map.html до assets/
 ASSETS_REL = "../../../assets/maps"
 
@@ -162,7 +182,8 @@ def _load_map_payload(map_id: int, name: str, custom: list[dict] | None = None) 
     labels = json.loads((d / "labels.json").read_text(encoding="utf-8"))
     points = json.loads((d / "points.json").read_text(encoding="utf-8"))
 
-    meta["name"] = name
+    en = i18n.lang() == "en"
+    meta["name"] = tr(name)
     # относительная база иконок этой карты (от web/map.html)
     meta["icons_base"] = f"{ASSETS_REL}/{map_id}/icons"
 
@@ -174,20 +195,32 @@ def _load_map_payload(map_id: int, name: str, custom: list[dict] | None = None) 
             [p["id"], p["x"], p["y"], p.get("area_id", 0), p.get("layer", 0)])
         counts[lid] = counts.get(lid, 0) + 1
 
+    # group/kind — по русским данным (логика), name/group_label — на языке интерфейса
     used_labels = [
-        {"id": l["id"], "name": l["name"], "group": l["group"], "count": counts[l["id"]],
+        {"id": l["id"], "name": (l.get("name_en") or tr(l["name"])) if en else l["name"],
+         "group": l["group"], "group_label": (l.get("group_en") or tr(l["group"])) if en else l["group"],
+         "count": counts[l["id"]],
          "gems": DEFAULT_PRIMOGEMS.get(l["name"], (0,))[0],
-         "kind": classify(l["name"], l.get("group", ""))}
+         # «Пещера» / «Подводная пещера» — входы (стоят на поверхности): через них ведём
+         # к сундукам под землёй
+         "kind": "cave" if l["name"] in CAVE_ENTRY_NAMES else classify(l["name"], l.get("group", ""))}
         for l in labels
         if l["id"] in counts
     ]
     # свои точки — отдельный слой (есть всегда, чтобы добавлять на лету)
     custom = custom or []
-    used_labels.append({"id": CUSTOM_LABEL, "name": CUSTOM_NAME, "group": CUSTOM_NAME,
-                        "count": len(custom), "gems": 0, "kind": "chest"})
+    used_labels.append({"id": CUSTOM_LABEL, "name": tr(CUSTOM_NAME), "group": CUSTOM_NAME,
+                        "group_label": tr(CUSTOM_NAME), "count": len(custom), "gems": 0,
+                        "kind": "chest"})
     points_by_label[str(CUSTOM_LABEL)] = [[c["id"], c["x"], c["y"], c.get("area")] for c in custom]
+    anchors_f = _map_dir(map_id) / ("anchors_en.json" if en else "anchors.json")
+    anchors = json.loads(anchors_f.read_text(encoding="utf-8")) if anchors_f.exists() else []
+    regions = build_regions(map_id, points)
+    for r in regions:
+        r["name"] = tr(r["name"])
     return {"meta": meta, "labels": used_labels, "points_by_label": points_by_label,
-            "regions": build_regions(map_id, points)}
+            "regions": regions, "anchors": anchors,
+            "ui": {"lang": i18n.lang(), "table": i18n.table() if en else {}}}
 
 
 def write_bundle(map_id: int, name: str, custom: list[dict] | None = None) -> None:
@@ -327,7 +360,8 @@ class OverlayWindow(QMainWindow):
         self.ui_state = UIStateStore()
         self._prompts: dict = {}
         self._prompts_t = 0.0
-        self._prompt_open_t = 0.0      # когда последний раз видели «Открыть»
+        self._prompt_open_t = 0.0      # когда последний раз видели подсказку сундука
+        self._prompt_rarity = ""       # его редкость из подсказки («богат», …)
         self._icons: dict = {}
         self._icons_t = 0.0
         self._pending_interact = 0.0   # F нажата без свежей позиции — ждём её до этого момента
@@ -360,6 +394,7 @@ class OverlayWindow(QMainWindow):
             interval_s=float(self.settings.get("track_interval", 0.4)))
         self.position_service.minimap_frac = self.settings.get("minimap")
         self.position_service.pickup_frac = self.settings.get("pickup_region")
+        self.position_service.game_lang = self._game_lang()
         self.recorder = DebugRecorder(DEBUG_DIR)
         self.position_service.recorder = self.recorder
         self.prompt_detector = PromptDetector(PROMPTS_DIR)
@@ -375,6 +410,9 @@ class OverlayWindow(QMainWindow):
         self.input_watcher.start()
         self.position_service.position.connect(self._on_position)
         self.position_service.lost.connect(self._on_position_lost)
+        self.position_service.scene.connect(self._on_scene)
+        self._scene = "no_game"
+        self._last_pickup: tuple[str, float] | None = None
         self.position_service.status.connect(self._on_position_status)
         self.position_service.scaleCalibrated.connect(self._on_scale_calibrated)
         self.position_service.runningChanged.connect(self._on_tracking_state)
@@ -401,8 +439,13 @@ class OverlayWindow(QMainWindow):
         # HUD навигации поверх игры (тест): стрелка у мини-карты, подсказка, звук
         self.hud = NavHud()
         self.hud.minimap_frac = self.settings.get("minimap")
+        self._track: list[tuple[float, float, float]] = []   # (t, x, y) — для направления бега
+        self._apply_hud_options()
         self.bridge.targetChanged.connect(self._on_target_changed)
         self.bridge.navPathReady.connect(self._on_nav_path)
+        self.bridge.routeClipRequested.connect(self._on_route_clip_requested)
+        self.bridge.routeClipReady.connect(
+            lambda pid, url: self._js(f"window.showRouteClip({json.dumps(pid)}, {json.dumps(url)});"))
         self.point_info.loaded.connect(self._on_card_for_hud)
         self._fg_timer = QTimer(self)
         self._fg_timer.timeout.connect(self._check_game_foreground)
@@ -442,6 +485,9 @@ class OverlayWindow(QMainWindow):
         self.hotkeys.toggleOverlay.connect(self.toggle_overlay_mode)
         self.hotkeys.toggleVisible.connect(self._toggle_visible)
         self.hotkeys.bookmark.connect(self._bookmark)
+        self.hotkeys.undo.connect(self._undo_auto_mark)
+        self.hotkeys.stopNav.connect(self._stop_nav)
+        self.hotkeys.toggleHud.connect(self._toggle_hud)
         self.hotkeys.start()
         if self.hotkeys.failed:
             self._log("Хоткеи заняты другой программой: " + ", ".join(self.hotkeys.failed)
@@ -473,7 +519,7 @@ class OverlayWindow(QMainWindow):
 
         # Восстанавливаем размер/позицию окна с прошлого раза.
         geom = self.ui_state.get_window()
-        if geom and len(geom) == 4:
+        if geom and len(geom) == 4 and self._on_screen(geom):
             self.setGeometry(*geom)
 
     # ---- helpers ----
@@ -492,6 +538,16 @@ class OverlayWindow(QMainWindow):
         except (json.JSONDecodeError, TypeError):
             return
         self._enabled_labels = [int(x) for x in st.get("enabled", [])]
+        if st.get("compact"):
+            # мини-режим: свой масштаб; вид обычного окна не затираем
+            zoom = (st.get("view") or {}).get("zoom")
+            if zoom is not None and zoom != self.ui_state.data.get("compact_zoom"):
+                self.ui_state.data["compact_zoom"] = zoom
+                self.ui_state.save()
+            self.ui_state.set_map_state(self.current_map_id, st.get("enabled", []),
+                                        self.ui_state.get_view(self.current_map_id),
+                                        {k: st.get(k) for k in ("region", "hide_collected", "follow")})
+            return
         extra = {k: st.get(k) for k in ("region", "hide_collected", "follow")}
         if st.get("region") != self._current_region:
             self._current_region = st.get("region")
@@ -516,10 +572,20 @@ class OverlayWindow(QMainWindow):
         labels = json.loads((_map_dir(mid) / "labels.json").read_text(encoding="utf-8"))
         self.auto_marker = AutoMarker(self.map_index, labels, self.settings.get("auto_rules"))
         # свои точки участвуют в авто-отметке как сундуки
-        self.auto_marker.register_label(CUSTOM_LABEL, CUSTOM_NAME, "chest")
+        self.auto_marker.register_label(CUSTOM_LABEL, tr(CUSTOM_NAME), "chest")
+        en_names = {l["id"]: l["name_en"] for l in labels if l.get("name_en")}
+        self.auto_marker.set_names(en_names if i18n.lang() == "en" else {},
+                                   en_names if self._game_lang() == "en" else {},
+                                   self._game_lang())
         for c in self.custom.for_map(mid):
             self.map_index.add_point(c["id"], CUSTOM_LABEL, c["x"], c["y"])
+        # после телепорта игрок у телепорта/статуи — трекер ищет там первым делом
+        tp_labels = (self.auto_marker.labels_by_kind.get("teleport", ())
+                     + self.auto_marker.labels_by_kind.get("statue", ()))
+        self.position_service.set_anchors(
+            [(x, y) for lid in tp_labels for _, x, y in self.map_index.by_label.get(lid, [])])
         self.point_info.map_id = mid
+        self.point_info.lang = i18n.lang()
         points = json.loads((_map_dir(mid) / "points.json").read_text(encoding="utf-8"))
         self.gems = PrimogemCounter(labels, points, self.settings.get("primogems"))
         self._regions = build_regions(mid, points)
@@ -598,6 +664,15 @@ class OverlayWindow(QMainWindow):
         row.addWidget(self.track_btn, 1)
         row.addWidget(self.calib_btn, 1)
         v.addLayout(row)
+        # «Что я вижу»: что распознаётся прямо сейчас (понятно, на каком этапе сбой)
+        self.see_label = QLabel()
+        self.see_label.setObjectName("posStatus")
+        self.see_label.setWordWrap(True)
+        self.see_label.setTextFormat(Qt.TextFormat.RichText)
+        v.addWidget(self.see_label)
+        self._see_timer = QTimer(self)
+        self._see_timer.timeout.connect(self._update_see)
+        self._see_timer.start(1000)
         self.pos_label = QLabel("Отслеживание выключено")
         self.pos_label.setObjectName("posStatus")
         self.pos_label.setWordWrap(True)
@@ -686,10 +761,28 @@ class OverlayWindow(QMainWindow):
 
     def _open_settings(self) -> None:
         dlg = SettingsDialog(self.settings.data, parent=self)
-        if dlg.exec():
-            self.settings.update(dlg.values())
-            self._apply_settings()
-            self._log("Настройки сохранены")
+        dlg.applied.connect(self._settings_applied)
+        dlg.restartRequested.connect(lambda: QTimer.singleShot(0, self._restart_app))
+        dlg.calibrationRequested.connect(lambda: QTimer.singleShot(0, self._open_calibration))
+        dlg.exec()
+
+    def _settings_applied(self, values: dict) -> None:
+        self.settings.update(values)
+        self._apply_settings()
+        self._log("Настройки сохранены")
+
+    def _restart_app(self) -> None:
+        """Перезапуск (после смены языка) — с теми же правами, что сейчас."""
+        import ctypes
+        import sys
+
+        args = " ".join(f'"{a}"' for a in sys.argv)
+        verb = "runas" if is_admin() else "open"
+        rc = ctypes.windll.shell32.ShellExecuteW(None, verb, sys.executable, args,
+                                                 str(PROJECT_ROOT), 1)
+        if rc > 32:
+            self.close()
+            QApplication.quit()
 
     def _open_calibration(self) -> None:
         dlg = CalibrationDialog(self.settings.data, self.position_service,
@@ -716,6 +809,8 @@ class OverlayWindow(QMainWindow):
         self.position_service.interval_s = float(self.settings.get("track_interval", 0.4))
         self._apply_pickup_region()
         self.auto_marker.set_rules(self.settings.get("auto_rules"))
+        self._apply_hud_options()
+        self._check_game_foreground()
         # прозрачность/размер оверлея — если сейчас в мини-режиме, применяем сразу
         if self._overlay_mode:
             self.setWindowOpacity(float(self.settings.get("overlay_opacity", 0.9)))
@@ -731,7 +826,7 @@ class OverlayWindow(QMainWindow):
         import mss
 
         with mss.mss() as sct:
-            self.detector_service.region = region_from_frac(frac, sct.monitors[1])
+            self.detector_service.region = region_from_frac(frac, game_rect(sct), "pickup_region")
 
     def _reset_progress(self) -> None:
         """Снять все отметки «собрано» — по второму нажатию (защита от случайного клика)."""
@@ -828,6 +923,12 @@ class OverlayWindow(QMainWindow):
         self.detect_log.insertItem(0, item)
         # подсветить, НЕ двигая карту: куда смотреть, решает пользователь
         self._js(f"window.highlightPoint({json.dumps(cand.point_id)}, false);")
+        self.hud.toast(f"{self.auto_marker.describe(cand.label_id)} — отмечено · "
+                       f"{self._undo_keys()} — отменить")
+
+    def _undo_keys(self) -> str:
+        combo = (self.settings.get("hotkeys") or {}).get("undo") or "<ctrl>+<alt>+z"
+        return "+".join(part.strip("<>").capitalize() for part in combo.split("+"))
 
     def _hotkey_mark_nearest(self) -> None:
         """Ctrl+Alt+M — отметить ближайшую несобранную точку рядом с игроком.
@@ -850,6 +951,8 @@ class OverlayWindow(QMainWindow):
         self._push_collected(pid, False)
         self._log("   ↶ отметка снята")
         self.undo_btn.setEnabled(bool(self._auto_marks))
+        name = self.auto_marker.describe(self.map_index.by_id[pid][0])             if pid in self.map_index.by_id else "точка"
+        self.hud.toast(f"↶ {name} — отметка снята", "#d29922")
 
     def _on_log_double_click(self, item: QListWidgetItem) -> None:
         pid = item.data(Qt.ItemDataRole.UserRole)
@@ -865,7 +968,7 @@ class OverlayWindow(QMainWindow):
     def _auto_recording(self, game_running: bool) -> None:
         """Лёгкая запись отладки — всегда, пока запущена игра (пишет только кадры
         окна игры; старые сессии чистятся сами: 5 последних, не больше 1 ГБ)."""
-        if not self.settings.get("auto_record", True):
+        if not self.settings.get("auto_record", True) or os.environ.get("GENSHINMAP_NO_RECORD"):
             if self.recorder.active and self.recorder.auto:
                 self.recorder.stop()
             return
@@ -1103,15 +1206,16 @@ class OverlayWindow(QMainWindow):
     def _replan(self, force: bool = False) -> None:
         """Проложить путь от игрока к цели (в фоне, не чаще раза в 2 с)."""
         target, pos = self.hud.target, self.position_service.latest(POSITION_MAX_AGE)
-        if not target or pos is None or self.nav_grid is None:
-            return
+        if not target or pos is None or self.nav_grid is None or target.get("tp"):
+            return                      # далеко и выгоднее телепорт — путь пешком не строим
         now = time.monotonic()
         if not force and now - getattr(self, "_nav_t", 0.0) < 2.0:
             return
         if getattr(self, "_nav_busy", False):
             return
         self._nav_t, self._nav_busy = now, True
-        grid, start, goal, pid = self.nav_grid, (pos.x, pos.y), (target["x"], target["y"]), target["pid"]
+        aim = target.get("via") or target                   # сначала ко входу в пещеру
+        grid, start, goal, pid = self.nav_grid, (pos.x, pos.y), (aim["x"], aim["y"]), target["pid"]
 
         def work() -> None:
             try:
@@ -1141,10 +1245,59 @@ class OverlayWindow(QMainWindow):
         if dev > 50:
             self._replan()
 
+    # ---- Анимация «как пройти» ----
+    def _on_route_clip_requested(self, pid: str) -> None:
+        """Путь от ближайшего телепорта (или от игрока, если он ближе) до точки —
+        анимацией на тайлах карты. В фоне; результат — сигнал routeClipReady."""
+        entry = self.map_index.by_id.get(pid) if self.map_index else None
+        if entry is None:
+            self.bridge.routeClipReady.emit(pid, "")
+            return
+        _, gx, gy = entry
+        tp_labels = (self.auto_marker.labels_by_kind.get("teleport", ())
+                     + self.auto_marker.labels_by_kind.get("statue", ()))
+        tps = self.map_index.candidates(tp_labels, gx, gy, set(), 4000)
+        start, start_name, key = None, "", ""
+        if tps:
+            _, tx, ty = self.map_index.by_id[tps[0].point_id]
+            start, key = (tx, ty), tps[0].point_id
+            is_tp = tps[0].label_id in self.auto_marker.labels_by_kind.get("teleport", ())
+            start_name = tr("Телепорт") if is_tp else tr("Статуя")
+        pos = self.position_service.latest(POSITION_MAX_AGE)
+        if pos is not None and (start is None or math.hypot(pos.x - gx, pos.y - gy) < tps[0].dist):
+            start, start_name, key = (pos.x, pos.y), tr("Ты здесь"), ""
+        if start is None:
+            self.bridge.routeClipReady.emit(pid, "")
+            return
+        mid, meta, grid = self.current_map_id, dict(self.meta), self.nav_grid
+        name = (self.auto_marker.display_of.get(entry[0]) or self.auto_marker.name_of.get(entry[0], "")
+                or tr("Цель"))
+        out = PROJECT_ROOT / "data" / "point_info" / str(mid) / f"{pid}_route_{key or 'me'}_{i18n.lang()}.webp"
+        url = f"../../../data/point_info/{mid}/{out.name}"
+
+        def work() -> None:
+            from ..routeclip import render_route_clip
+
+            try:
+                if not (key and out.exists()):
+                    path = grid.plan(start, (gx, gy)) if grid is not None else []
+                    render_route_clip(meta, path or [start, (gx, gy)], out,
+                                      ASSETS_MAPS / str(mid) / "tile_cache",
+                                      (start_name, name[:28]))
+                self.bridge.routeClipReady.emit(pid, url + f"?t={int(out.stat().st_mtime)}")
+            except Exception as e:  # noqa: BLE001 — нет сети/тайлов: карточка без анимации
+                self._diag(f"анимация пути {pid}: {e}")
+                self.bridge.routeClipReady.emit(pid, "")
+
+        threading.Thread(target=work, daemon=True).start()
+
     def _on_target_changed(self, target_json: str) -> None:
         target = json.loads(target_json) if target_json else None
-        if (target or {}).get("pid") != (self.hud.target or {}).get("pid"):
-            self._nav_path = []
+        old = self.hud.target or {}
+        if (target or {}).get("pid") != old.get("pid") or \
+                bool((target or {}).get("tp")) != bool(old.get("tp")) or \
+                bool((target or {}).get("via")) != bool(old.get("via")):
+            self._nav_path = []                         # новая цель или телепорт/пешком
             self.hud.set_path([])
         self.hud.set_target(target)
         if target:
@@ -1158,6 +1311,40 @@ class OverlayWindow(QMainWindow):
         except (json.JSONDecodeError, TypeError):
             pass
 
+    # ---- Поверх игры: что показывать ----
+    def _apply_hud_options(self) -> None:
+        g = self.settings.get
+        h = self.hud
+        h.show_path, h.show_compass = g("hud_path", True), g("hud_compass", True)
+        h.show_card, h.show_toasts, h.sounds = g("hud_card", True), g("hud_toasts", True), g("hud_sounds", True)
+        h.update()
+        opts = {"autoNext": bool(g("auto_next", True)), "useTp": bool(g("route_teleports", True))}
+        self._js(f"window.setNavOptions && window.setNavOptions({json.dumps(opts)});")
+
+    def _stop_nav(self) -> None:
+        """Хоткей: перестать вести к цели / закончить маршрут."""
+        if self.hud.target:
+            self._js("window.clearTarget && window.clearTarget();")
+            self._log("✕ ведение остановлено")
+
+    def _toggle_hud(self) -> None:
+        """Хоткей: скрыть/показать всё поверх игры (настройка сохраняется)."""
+        on = not self.settings.get("hud_enabled", True)
+        self.settings.set("hud_enabled", on)
+        self._check_game_foreground()
+        self._log("Подсказки поверх игры: " + ("включены" if on else "выключены"))
+
+    def _update_heading(self, pos) -> None:
+        """Куда бежит игрок: смещение за ~1.5 с (не меньше 5 ед.)."""
+        now = time.monotonic()
+        self._track.append((now, pos.x, pos.y))
+        self._track = [p for p in self._track if now - p[0] <= 3.0]
+        older = [p for p in self._track if now - p[0] >= 1.0]
+        _, x, y = older[-1] if older else self._track[0]
+        dx, dy = pos.x - x, pos.y - y
+        if math.hypot(dx, dy) >= 5:                    # стоит на месте — прежнее направление
+            self.hud.heading = math.degrees(math.atan2(dx, -dy)) % 360
+
     def _check_game_foreground(self) -> None:
         from ..detector.process_watcher import is_genshin_foreground
 
@@ -1168,7 +1355,10 @@ class OverlayWindow(QMainWindow):
     def show_player(self, pos, weak: bool = False) -> None:
         self._js(f"window.setPlayer({pos.x}, {pos.y}, {pos.score:.3f}, {str(weak).lower()});")
         if not weak:
-            self.hud.set_player(pos.x, pos.y)
+            self.hud.set_minimap(self.position_service.minimap_px, self.position_service.ui_s)
+            self._update_heading(pos)
+            self.hud.set_player(pos.x, pos.y,
+                                pos.scale or self._map_scale(self.current_map_id))
             self._follow_path(pos)
 
     def _on_position_lost(self) -> None:
@@ -1179,17 +1369,83 @@ class OverlayWindow(QMainWindow):
         last = self.position_service.latest(float("inf"))
         if last is not None:
             self.show_player(last, weak=True)
-        self._js("window.setLostHint(true);")
+        self._show_scene_hint(self._scene if self._scene != "ok" else "unknown_area")
         self.hud.player = None
         self.hud.update()
         if self._pending_mark and time.monotonic() > self._pending_mark[1]:
             self._pending_mark = None
             self._log("   позиция не найдена — отметь точку вручную")
 
+    # ---- что сейчас в игре ----
+    def _on_scene(self, name: str) -> None:
+        self._scene = name
+        if name == "ok":
+            self._js("window.setLostHint(false);")
+        elif self.position_service.running:
+            self._show_scene_hint(name)
+        self._update_see()
+
+    def _show_scene_hint(self, name: str) -> None:
+        text = SCENES.get(name, (None, None))[1]
+        if text:
+            self._js(f"window.setLostHint(true, {json.dumps(tr(text))});")
+        else:
+            self._js("window.setLostHint(false);")
+
+    def _update_see(self) -> None:
+        """Строка «Что я вижу»: игра · мини-карта · позиция · подсказка сундука."""
+        ps = self.position_service
+        game = getattr(self, "_game_running_cache", False)
+        tracking = ps.running
+        mini = tracking and ps.minimap_visible
+        pos = ps.latest(3.0)
+
+        def chip(ok: bool, text: str) -> str:
+            color = "#3fb950" if ok else "#6f7f9f"
+            return f"<span style='color:{color}'>{'●' if ok else '○'} {tr(text)}</span>"
+
+        chest_t = time.monotonic() - self._prompt_open_t if self._prompt_open_t else None
+        html = " &nbsp;".join([chip(game, "игра"), chip(mini, "мини-карта"),
+                               chip(pos is not None, "позиция"),
+                               chip(chest_t is not None and chest_t < 60, "сундук")])
+        scene = SCENES.get(self._scene, ("", None))[0]
+        if not tracking:
+            scene = "отслеживание выключено"
+        html += f"<br><span style='color:#c9d4e8'>{tr('Сейчас')}: {tr(scene)}</span>"
+        if self._last_pickup and time.monotonic() - self._last_pickup[1] < 60:
+            html += f"<br><span style='color:#8b9ab8'>{tr('Получено')}: {self._last_pickup[0]}</span>"
+        self.see_label.setText(html)
+
+    def _prompts_on(self) -> bool:
+        """Подсказки читаются: эталоном-картинкой или OCR."""
+        return self.prompt_detector.ready or self._ocr_ok
+
     def _on_prompts(self, found: dict) -> None:
         self._prompts, self._prompts_t = found, time.monotonic()
         if "open" in found:
             self._prompt_open_t = self._prompts_t
+            self._prompt_rarity = found.get("rarity") or ""
+            self._prompt_seen = True     # подсказки сундуков в этой сессии читаются
+        self._chest_prompt_gone(found)
+
+    def _chest_prompt_gone(self, found: dict) -> None:
+        """F нажата, когда на экране была подсказка сундука, и она пропала, а игрок
+        стоит на месте — сундук открыт (запасной путь, если «Получено» не прочиталось)."""
+        po = self._pending_open
+        if po is None or not po.get("prompt") or po["cand"] is None:
+            return
+        if "open" in found:
+            po["gone"] = 0
+            return
+        pos = self.position_service.latest(INTERACT_POS_AGE)
+        if pos is None or math.hypot(pos.x - po["pos"].x, pos.y - po["pos"].y) > PROMPT_GONE_MOVE:
+            po["gone"] = 0
+            return
+        po["gone"] = po.get("gone", 0) + 1
+        if po["gone"] >= PROMPT_GONE_READS:
+            self._pending_open = None
+            self._diag(f"сундук {po['cand'].point_id} открыт: подсказка пропала после F")
+            self._do_mark(po["cand"], po["pos"], "открыт — подсказка сундука пропала")
 
     def _on_icons(self, scores: dict) -> None:
         self._icons, self._icons_t = scores, time.monotonic()
@@ -1229,8 +1485,17 @@ class OverlayWindow(QMainWindow):
         старое правило: F у сундука = открыт."""
         now = time.monotonic()
         self._interact_pos = (pos, now)
-        near = self.auto_marker.chest_near(pos.x, pos.y, self.store.collected, 60)
-        cand = near if near is not None and near.dist <= CHEST_MARK_RADIUS else None
+        # подсказка «F ▶ Богатый сундук» была на экране — F открыла сундук, и мы
+        # знаем его редкость: берём ближайший ТАКОЙ, а не просто ближайший
+        chest_prompt = self._prompts_on() and now - self._prompt_open_t <= PROMPT_MAX_AGE
+        if chest_prompt:
+            near = self.auto_marker.chest_by_prompt(pos.x, pos.y, self.store.collected,
+                                                    self._prompt_rarity, 60)
+            radius = CHEST_PROMPT_RADIUS
+        else:
+            near = self.auto_marker.chest_near(pos.x, pos.y, self.store.collected, 60)
+            radius = CHEST_MARK_RADIUS
+        cand = near if near is not None and near.dist <= radius else None
         if cand is not None or self._ocr_ok:
             po = self._pending_open
             if po is None or now - po["t"] > OPEN_WINDOW_S:
@@ -1238,9 +1503,14 @@ class OverlayWindow(QMainWindow):
                 # (подбор выпавших предметов) снимок не перезаписывают. Сундука
                 # на карте может и не быть (cand=None) — тогда будет своя точка.
                 self._pending_open = {"cand": cand, "pos": pos, "t": now,
-                                      "base": Counter(self._pickup_lines)}
-            elif cand is not None and (po["cand"] is None or cand.dist < po["cand"].dist):
+                                      "base": Counter(self._pickup_lines),
+                                      "prompt": chest_prompt, "gone": 0}
+            elif cand is not None and (po["cand"] is None or chest_prompt
+                                       or cand.dist < po["cand"].dist):
                 po["cand"], po["pos"] = cand, pos
+            if chest_prompt:
+                po = self._pending_open
+                po["prompt"], po["gone"] = True, 0
             self._pending_open["t"] = now
         act = None
         if not self._ocr_ok:
@@ -1251,6 +1521,7 @@ class OverlayWindow(QMainWindow):
             if act is not None:
                 self._do_mark(act.cand, pos, act.reason)
         self._diag(f"{key} @ ({pos.x:.0f},{pos.y:.0f}) score={pos.score:.2f} "
+                   f"подсказка: {('сундук ' + self._prompt_rarity) if chest_prompt else 'нет'}; "
                    f"ближайший сундук: {near.point_id + f' {near.dist:.0f} ед.' if near else 'нет'}"
                    f" -> {'отмечен' if act else ('жду плашку' if self._ocr_ok and self._pending_open else 'нет')}")
         if near is not None and near.dist <= 25:
@@ -1273,14 +1544,18 @@ class OverlayWindow(QMainWindow):
         for old in files[:-19]:
             old.unlink(missing_ok=True)
         with mss.mss() as sct:
-            img = np.array(sct.grab(sct.monitors[1]))
+            img = np.array(sct.grab(game_rect(sct)))       # только окно игры
         img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
         cv2.imwrite(str(out / f"chest_{datetime.now():%H%M%S}.jpg"), img,
                     [cv2.IMWRITE_JPEG_QUALITY, 85])
 
-    @staticmethod
-    def _norm_ocr(text: str) -> str:
+    def _game_lang(self) -> str:
+        return "en" if self.settings.get("game_lang", "ru") == "en" else "ru"
+
+    def _norm_ocr(self, text: str) -> str:
         """OCR путает похожие латинские и русские буквы: «Mopa» -> «мора»."""
+        if self._game_lang() == "en":
+            return text.lower()
         return text.lower().translate(str.maketrans("aeopcxmkbtyh", "аеорсхмквтун"))
 
     def _on_pickup_text(self, lines: list) -> None:
@@ -1290,6 +1565,8 @@ class OverlayWindow(QMainWindow):
         norm = [self._norm_ocr(line) for line in lines]
         fresh = list((Counter(x for x in norm if x) - Counter(self._pickup_lines)).elements())
         self._pickup_lines = norm
+        if fresh:
+            self._last_pickup = (lines[-1][:40], time.monotonic())
         self._valuables_from_pickup(fresh)
         po = self._pending_open
         if po is None:
@@ -1302,8 +1579,9 @@ class OverlayWindow(QMainWindow):
             return
         # новые строки с учётом повторов: два одинаковых сундука дают одинаковые строки
         new = list((Counter(line for line in norm if line) - po["base"]).elements())
-        chest_like = any("приключ" in line for line in new) or \
-            (any("мора" in line for line in new) and len(new) >= 2)
+        exp, mora = ("adventure", "mora") if self._game_lang() == "en" else ("приключ", "мора")
+        chest_like = any(exp in line for line in new) or \
+            (any(mora in line for line in new) and len(new) >= 2)
         if not chest_like:
             return
         self._pending_open = None
@@ -1381,23 +1659,33 @@ class OverlayWindow(QMainWindow):
             pos.x, pos.y, self.store.collected))
         self.position_service.read_pickup = (near_chest is not None or near_valuable
                                              or self._pending_open is not None)
+        # подсказки читаем у любого сундука (и собранного/«вероятного» — вдруг он на месте)
+        self.position_service.read_prompts = self._pending_open is not None or bool(
+            self.map_index.candidates(self.auto_marker.labels_by_kind.get("chest", ()),
+                                      pos.x, pos.y, set(), PROMPT_READ_RADIUS))
         if not self.position_service.read_pickup:
             self._pickup_lines = []
         if self._pending_interact and time.monotonic() <= self._pending_interact:
             self._pending_interact = 0.0
             self._interact_at(pos, "F (отложено)")
         prompts = None
-        if self.prompt_detector.ready and time.monotonic() - self._prompts_t <= PROMPT_MAX_AGE:
+        if self._prompts_on() and time.monotonic() - self._prompts_t <= PROMPT_MAX_AGE:
             prompts = self._prompts
         icons = self._icons if time.monotonic() - self._icons_t <= PROMPT_MAX_AGE else None
         for act in self.auto_marker.update(pos.x, pos.y, self.store.collected,
                                            prompts=prompts, probable=self.store.probable,
-                                           icons=icons, valuables_by_pickup=self._ocr_ok):
+                                           icons=icons, valuables_by_pickup=self._ocr_ok,
+                                           absence=getattr(self, "_prompt_seen", False)):
             c = act.cand
             what = self.auto_marker.describe(c.label_id)
             if act.action == "collected":
                 self._do_mark(c, pos, act.reason)
-            elif act.action == "probable":
+            elif act.action == "probable" and self.settings.get("absence_mark", True) \
+                    and self._absent_again(c.point_id):
+                # второй заход в другой раз — сундука снова нет: собран
+                self.observations.record(c.point_id, "absent", act.reason)
+                self._do_mark(c, pos, "нет на месте уже во второй заход")
+            elif act.action == "probable" and c.point_id not in self.store.probable:
                 self.observations.record(c.point_id, "absent", act.reason)
                 self.store.mark_probable(c.point_id)
                 self._push_collected(c.point_id, True)
@@ -1405,7 +1693,13 @@ class OverlayWindow(QMainWindow):
                 self.undo_btn.setEnabled(True)
                 self._log_point(f"❔ {what} — вероятно собран ({act.reason}). "
                                 "Клик по маркеру — подтвердить", c.point_id)
+                self.hud.toast(f"❔ {what} — вероятно уже собран · {self._undo_keys()} — отменить",
+                               "#d29922")
                 self._js(f"window.highlightPoint({json.dumps(c.point_id)}, false);")
+            elif act.action == "probable":
+                # тот же заход (стоит рядом): обновляем время — второй заход считается,
+                # только если игрок уходил и вернулся
+                self.observations.record(c.point_id, "absent", act.reason)
             elif act.action == "present":
                 self.observations.record(c.point_id, "present", act.reason)
                 self.store.unmark(c.point_id)
@@ -1414,6 +1708,14 @@ class OverlayWindow(QMainWindow):
             elif act.action == "seen":
                 self.observations.record(c.point_id, "present", act.reason)
                 self.recorder.event("seen", point=c.point_id)
+
+    SECOND_VISIT_S = 600          # второй заход — не раньше чем через 10 минут
+
+    def _absent_again(self, point_id: str) -> bool:
+        """Сундука уже не было в прошлый заход (и это был другой заход)."""
+        prev = self.observations.get(point_id)
+        return bool(prev and prev.get("state") == "absent"
+                    and time.time() - prev.get("t", 0) >= self.SECOND_VISIT_S)
 
     def _log_point(self, text: str, point_id: str) -> None:
         ts = datetime.now().strftime("%H:%M:%S")
@@ -1430,7 +1732,7 @@ class OverlayWindow(QMainWindow):
         from PyQt6.QtCore import QRect
 
         with mss.mss() as sct:
-            r = region_from_frac(frac, sct.monitors[1])
+            r = region_from_frac(frac, game_rect(sct), key)
         dpr = self.devicePixelRatioF() or 1.0
         area = QRect(int(r["left"] / dpr), int(r["top"] / dpr),
                      int(r["width"] / dpr), int(r["height"] / dpr))
@@ -1444,6 +1746,9 @@ class OverlayWindow(QMainWindow):
         if self.position_service.running and self._minimap_covered():
             text = ("⚠ Окно карты закрывает мини-карту игры — позицию не найти. "
                     "Сдвинь окно вправо или включи мини-оверлей (Ctrl+Alt+O).\n" + text)
+        elif self.position_service.running and self._covers("prompt_region"):
+            text = ("⚠ Окно карты закрывает подсказки у персонажа («F ▶ … сундук») — "
+                    "сундуки распознаются хуже. Сдвинь окно в сторону.\n" + text)
         elif self.position_service.running and self._covers("pickup_region"):
             text = ("⚠ Окно карты закрывает список «Получено» слева — открытие сундуков "
                     "не распознать. Сдвинь окно правее.\n" + text)
@@ -1485,13 +1790,13 @@ class OverlayWindow(QMainWindow):
             self.control_dock.hide()
             self.statusBar().hide()
             # прячем панели веб-карты, чтобы карта заняла всё окно
-            self._js("window.setCompact(true);")
+            self._js(f"window.setCompact(true, {json.dumps(self.ui_state.data.get('compact_zoom'))});")
             self.setWindowFlags(
                 Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
             )
             self.setWindowOpacity(float(self.settings.get("overlay_opacity", 0.9)))
             saved = self.ui_state.data.get("overlay_geometry")
-            if saved and len(saved) == 4:
+            if saved and len(saved) == 4 and self._on_screen(saved):
                 self.setGeometry(*saved)
             else:
                 # по умолчанию — правый верхний угол (мини-карта игры слева)
@@ -1504,6 +1809,7 @@ class OverlayWindow(QMainWindow):
                 wdg.raise_()
             self._position_mini_controls()
             self.show()
+            self._save_mode()
         else:
             self._save_overlay_geometry()
             for wdg in (self.title_bar, self.size_grip):
@@ -1512,6 +1818,7 @@ class OverlayWindow(QMainWindow):
             self.statusBar().show()
             self._js("window.setCompact(false);")
             self.setWindowFlags(Qt.WindowType.Window | self._top_flags())
+            self._save_mode()
             self.setWindowOpacity(1.0)
             if getattr(self, "_normal_geometry", None):
                 self.setGeometry(self._normal_geometry)
@@ -1520,8 +1827,47 @@ class OverlayWindow(QMainWindow):
     def _save_overlay_geometry(self) -> None:
         if self._overlay_mode:
             g = self.geometry()
-            self.ui_state.data["overlay_geometry"] = [g.x(), g.y(), g.width(), g.height()]
-            self.ui_state.save()
+            rect = [g.x(), g.y(), g.width(), g.height()]
+            if self.ui_state.data.get("overlay_geometry") != rect:
+                self.ui_state.data["overlay_geometry"] = rect
+                self.ui_state.save()
+
+    def _save_mode(self) -> None:
+        """Запомнить, в каком режиме окно: следующий запуск — в нём же."""
+        self.ui_state.data["overlay_on"] = self._overlay_mode
+        self.ui_state.save()
+
+    def _save_geometry_soon(self) -> None:
+        """Место/размер меняются (тянут мышью) — сохраняем через полсекунды покоя."""
+        if not hasattr(self, "_geom_timer"):
+            self._geom_timer = QTimer(self)
+            self._geom_timer.setSingleShot(True)
+            self._geom_timer.timeout.connect(self._save_current_geometry)
+        self._geom_timer.start(500)
+
+    def _save_current_geometry(self) -> None:
+        if self._overlay_mode:
+            self._save_overlay_geometry()
+        elif not self.isMinimized() and not self.isMaximized():
+            g = self.geometry()
+            self.ui_state.set_window([g.x(), g.y(), g.width(), g.height()])
+
+    @staticmethod
+    def _on_screen(rect: list) -> bool:
+        """Сохранённое место хотя бы наполовину на каком-то мониторе (мониторы меняются)."""
+        from PyQt6.QtCore import QRect
+
+        r = QRect(*[int(v) for v in rect])
+        for s in QApplication.screens():
+            inter = s.availableGeometry().intersected(r)
+            if inter.width() * inter.height() >= r.width() * r.height() / 2:
+                return True
+        return False
+
+    def moveEvent(self, event) -> None:
+        super().moveEvent(event)
+        if getattr(self, "_map_ready", False):
+            self._save_geometry_soon()
 
     def _position_mini_controls(self) -> None:
         self.title_bar.setGeometry(0, 0, self.width(), _TitleBar.HEIGHT)
@@ -1531,6 +1877,8 @@ class OverlayWindow(QMainWindow):
         super().resizeEvent(event)
         if self._overlay_mode:
             self._position_mini_controls()
+        if getattr(self, "_map_ready", False):
+            self._save_geometry_soon()
 
     def _toggle_visible(self) -> None:
         """Ctrl+Alt+H — быстро спрятать/показать окно (для альт-таба в игру)."""
@@ -1585,11 +1933,32 @@ class OverlayWindow(QMainWindow):
         self._js(f"window.applyState({json.dumps(state, ensure_ascii=False)});")
         # применяем лимит маркеров из настроек
         self._js(f"window.setMaxMarkers({int(self.settings.get('max_markers', 1200))});")
+        self._apply_hud_options()
+        if not getattr(self, "_welcome_done", False) and not os.environ.get("GENSHINMAP_NO_WELCOME"):
+            self._welcome_done = True
+            QTimer.singleShot(800, self._show_welcome)
         if self._overlay_mode:
-            self._js("window.setCompact(true);")
+            self._js(f"window.setCompact(true, {json.dumps(self.ui_state.data.get('compact_zoom'))});")
+        elif self.ui_state.data.get("overlay_on") and not getattr(self, "_mode_restored", False):
+            self._mode_restored = True
+            QTimer.singleShot(300, self.toggle_overlay_mode)
         last = self.position_service.latest(10.0)
         if last is not None:
             self.show_player(last)
+
+    def _show_welcome(self) -> None:
+        """Первый запуск — 3 шага; после обновления — «Что нового» (по разу)."""
+        from .welcome import WHATS_NEW, WelcomeDialog, WhatsNewDialog
+
+        last = self.ui_state.data.get("last_version")
+        self.ui_state.data["last_version"] = __version__
+        self.ui_state.save()
+        if not self.settings.get("onboarded", False):
+            self._welcome = WelcomeDialog(self)
+            self._welcome.show()
+        elif last != __version__ and __version__ in WHATS_NEW:
+            self._whatsnew = WhatsNewDialog(self, __version__)
+            self._whatsnew.show()
 
     def _on_marker_clicked(self, marker_id: str) -> None:
         collected = self.store.toggle(marker_id)
@@ -1627,7 +1996,8 @@ class OverlayWindow(QMainWindow):
 
     # ---- Статус игры ----
     def _update_game_status(self) -> None:
-        if is_genshin_running():
+        self._game_running_cache = is_genshin_running()
+        if self._game_running_cache:
             self.status_label.setText("🟢 Genshin запущен")
             self._auto_recording(True)
             # игра запущена — сразу следим за позицией (для авто-отметки);

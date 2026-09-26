@@ -57,6 +57,11 @@ def main() -> int:
         return 0
     app = QApplication(sys.argv)
     app.setApplicationName("Genshin Interactive Map")
+    from genshinmap import i18n
+    from genshinmap.storage import SettingsStore
+
+    i18n.set_lang(os.environ.get("GENSHINMAP_LANG") or SettingsStore().get("ui_lang", "ru"))
+    i18n.install_qt(app)
     if LOGO.exists():
         app.setWindowIcon(QIcon(str(LOGO)))
     window = OverlayWindow()

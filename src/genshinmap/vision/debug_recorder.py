@@ -66,15 +66,21 @@ class DebugRecorder:
             self.dir = None
 
     def prune(self) -> None:
-        """Удалить старые сессии: оставить KEEP_SESSIONS и не больше MAX_TOTAL_BYTES."""
+        """Удалить старые сессии: оставить KEEP_SESSIONS и не больше MAX_TOTAL_BYTES.
+        Сессии без кадров (игра не была активна) удаляются сразу и НЕ вытесняют
+        настоящие записи."""
         import shutil
 
         sessions = sorted(self.root.glob("session_*"), reverse=True)   # новые первыми
-        total = 0
-        for i, d in enumerate(sessions):
-            size = sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
-            total += size
-            if i >= KEEP_SESSIONS or total > MAX_TOTAL_BYTES:
+        total = kept = 0
+        for d in sessions:
+            files = [f for f in d.rglob("*") if f.is_file()]
+            if not any(f.suffix in (".jpg", ".png") for f in files):
+                shutil.rmtree(d, ignore_errors=True)
+                continue
+            total += sum(f.stat().st_size for f in files)
+            kept += 1
+            if kept > KEEP_SESSIONS or total > MAX_TOTAL_BYTES:
                 shutil.rmtree(d, ignore_errors=True)
 
     # ---------- запись ----------
@@ -129,7 +135,8 @@ class DebugRecorder:
         name = f"q_{self._n:06d}.jpg"
         cv2.imwrite(str(self.dir / "prompt" / name), frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
         self._write_line({"type": "prompt", "file": name,
-                          "found": {k: round(v, 3) for k, v in found.items()}})
+                          "found": {k: round(v, 3) if isinstance(v, float) else v
+                                    for k, v in found.items()}})
 
     def screen(self, grab, force: bool = False) -> None:
         if self.dir is None or not (force or self._due("screen")):

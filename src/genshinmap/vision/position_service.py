@@ -10,6 +10,7 @@ GUI-потоке он подвешивал бы окно. Наружу — си�
 """
 from __future__ import annotations
 
+import concurrent.futures as cf
 import math
 import re
 import threading
@@ -21,8 +22,15 @@ import mss
 import numpy as np
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from ..detector.process_watcher import is_genshin_foreground, is_genshin_running
+from ..detector.process_watcher import (
+    game_window_rect,
+    is_genshin_foreground,
+    is_genshin_running,
+)
 from .debug_recorder import DebugRecorder
+from .layout import ANCHORS, ui_scale
+from .layout import region_from_frac as _layout_region
+from .minimap_check import MinimapCheck
 from .position_tracker import (
     Position,
     PositionTracker,
@@ -31,7 +39,7 @@ from .position_tracker import (
     reference_path,
     water_reference_path,
 )
-from .prompt_detector import PromptDetector
+from .prompt_detector import PromptDetector, parse_prompt_lines
 
 # Прыжок позиции дальше JUMP_UNITS от недавней (за JUMP_MEMORY_S) принимаем только
 # после JUMP_CONFIRM подряд совпадающих (в пределах JUMP_AGREE) результатов.
@@ -41,17 +49,40 @@ JUMP_UNITS = 150
 JUMP_MEMORY_S = 30.0
 JUMP_CONFIRM = 3
 JUMP_AGREE = 40
+SLOW_RESULT_MAX_AGE = 15.0   # результат фонового поиска по кадру старше — не используем
 
 
-def region_from_frac(frac: dict, monitor: dict) -> dict[str, int]:
-    """Доли экрана -> пиксельная область на мониторе."""
-    w, h = monitor["width"], monitor["height"]
-    return {
-        "left": monitor["left"] + round(frac["left"] * w),
-        "top": monitor["top"] + round(frac["top"] * h),
-        "width": max(8, round(frac["width"] * w)),
-        "height": max(8, round(frac["height"] * h)),
-    }
+def region_from_frac(frac: dict, rect: dict, key: str = "minimap") -> dict[str, int]:
+    """Доли эталонной раскладки -> пиксельная область в окне игры rect
+    (привязка к краю — по виду элемента, см. layout.ANCHORS)."""
+    return _layout_region(frac, rect, ANCHORS.get(key, "lt"))
+
+
+def classify_scene(gray: np.ndarray) -> str:
+    """Уменьшенный серый кадр игры без мини-карты -> loading | cutscene | menu."""
+    g = gray.astype(np.float32)
+    if g.std() < 7:
+        return "loading"                    # однотонный экран (чёрный/белый)
+    h = g.shape[0]
+    top, bot, mid = g[: int(h * 0.09)], g[int(h * 0.91):], g[int(h * 0.2): int(h * 0.8)]
+    if max(top.mean(), bot.mean()) < 14 and max(top.std(), bot.std()) < 8 and mid.mean() > 25:
+        return "cutscene"                   # чёрные полосы сверху и снизу
+    return "menu"
+
+
+def game_rect(sct) -> dict:
+    """Окно игры на экране; нет окна — первый монитор (как раньше)."""
+    return game_window_rect() or sct.monitors[1]
+
+
+def ui_height(rect: dict) -> float:
+    """Высота «эталонного» экрана в пикселях окна: мини-карта масштабируется по ней."""
+    return 1080.0 * ui_scale(rect["width"], rect["height"])
+
+
+def ocr_upscale(ui_s: float) -> float:
+    """Мелкий шрифт (окно меньше 1080p) OCR читает хуже — увеличиваем сильнее."""
+    return 1.5 / min(1.0, max(0.5, ui_s))
 
 
 class PositionService(QObject):
@@ -64,6 +95,8 @@ class PositionService(QObject):
     icons = pyqtSignal(object)        # {point_id: 0..1} значки на мини-карте
     pickupText = pyqtSignal(object)   # строки OCR из области плашки подбора
     uidSeen = pyqtSignal(str)         # UID аккаунта (правый нижний угол игры)
+    # что сейчас в игре: ok | unknown_area | loading | cutscene | menu | background | no_game
+    scene = pyqtSignal(str)
 
     def __init__(self, interval_s: float = 0.4, require_game: bool = True) -> None:
         super().__init__()
@@ -76,6 +109,8 @@ class PositionService(QObject):
         self.prompt_detector: PromptDetector | None = None
         self.watch: list[tuple[str, float, float]] = []   # точки, где смотреть значок
         self.read_pickup = False      # читать плашку подбора (игрок у несобранного сундука)
+        self.read_prompts = False     # читать подсказки взаимодействия (игрок у сундука)
+        self.game_lang = "ru"         # язык текста в игре (OCR)
         self._ocr = None              # ScreenOcr создаётся в потоке сервиса
         self._lock = threading.Lock()       # доступ к трекеру (поток сервиса + калибровка)
         self._stop = threading.Event()
@@ -85,6 +120,17 @@ class PositionService(QObject):
         self._map_id: int | None = None
         self._latest: Position | None = None
         self._latest_t = 0.0
+        self.minimap_px: dict | None = None     # где мини-карта на экране (для HUD)
+        self.minimap_visible = False            # видна ли сейчас мини-карта игры
+        self.anchors: list[tuple[float, float]] = []   # телепорты/статуи (поиск после ТП)
+        # медленный поиск (секунды) — в отдельном потоке: чтение «Получено» и подсказок
+        # сундуков в это время продолжает работать
+        self._slow_pool = cf.ThreadPoolExecutor(max_workers=1, thread_name_prefix="pos-slow")
+        self._slow: tuple[cf.Future, float, PositionTracker] | None = None
+        from ..paths import PROJECT_ROOT
+
+        self._minimap_check = MinimapCheck(PROJECT_ROOT / "assets" / "ui")
+        self.ui_s = 1.0                         # пикселей окна на пиксель раскладки 1080p
 
     # ---------- управление ----------
     def set_map(self, map_id: int, meta: dict, assets_dir: Path, scale: float | None) -> None:
@@ -170,6 +216,7 @@ class PositionService(QObject):
                 ensure_reference(meta, ref, progress=lambda d, n: self.status.emit(
                     f"Готовлю карту для позиции: {d}/{n} тайлов"))
             tracker = PositionTracker(meta, ref, scale=scale)
+            tracker.set_anchors(self.anchors)
             water = water_reference_path(meta, assets_dir)
             if not water.exists():
                 self.status.emit("Готовлю маску воды (разово)…")
@@ -201,21 +248,31 @@ class PositionService(QObject):
                 if not game_ok:
                     self.status.emit("Жду запуска Genshin…")
             if not game_ok:
+                self._set_scene("no_game")
                 stop.wait(1.0)
                 continue
             try:
-                mon = sct.monitors[1]
-                region = region_from_frac(self.minimap_frac, mon)
+                mon = game_rect(sct)
+                region = region_from_frac(self.minimap_frac, mon, "minimap")
+                self.minimap_px, self.ui_s = region, ui_scale(mon["width"], mon["height"])
+                ui_h = ui_height(mon)
                 shot = np.array(sct.grab(region))
                 gray = cv2.cvtColor(shot, cv2.COLOR_BGRA2GRAY)
+                bgr = cv2.cvtColor(shot, cv2.COLOR_BGRA2BGR)
                 scale_before = tr.scale
-                with self._lock:
-                    pos = tr.locate(gray, mon["height"],
-                                    minimap_bgr=cv2.cvtColor(shot, cv2.COLOR_BGRA2BGR))
-                self._check_prompts(sct, mon)
-                self._read_pickup(sct, mon)
+                # мини-карты нет (меню, загрузка, большая карта, окно поверх игры) —
+                # позицию не ищем, текст не читаем, кадры не пишем
+                visible = self._minimap_check.visible(bgr)
+                self.minimap_visible = visible
+                pos = None
+                if visible:
+                    pos = self._locate(tr, gray, ui_h, bgr)
+                    self._check_prompts(sct, mon)
+                    self._read_pickup(sct, mon)
+                    self._record(sct, mon, shot, pos)
+                else:
+                    self._detect_scene(sct, mon)
                 self._read_uid(sct, mon)
-                self._record(sct, mon, shot, pos)
             except Exception as e:  # noqa: BLE001 — сбой захвата не должен ронять поток
                 self.status.emit(f"Ошибка захвата: {e}")
                 stop.wait(1.0)
@@ -228,13 +285,14 @@ class PositionService(QObject):
             if pos is not None and pos.reliable:
                 fails = 0
                 had_pos = True
+                self._set_scene("ok")
                 self._latest, self._latest_t = pos, time.monotonic()
                 if scale_before is None and tr.scale is not None and self._map_id is not None:
                     self.scaleCalibrated.emit(self._map_id, float(tr.scale))
                 watch = self.watch
                 if watch:
                     # значки считаем ДО сигнала позиции: окно обработает их вместе
-                    scores = tr.icon_presence(gray, mon["height"], pos, watch)
+                    scores = tr.icon_presence(gray, ui_h, pos, watch)
                     self.icons.emit(scores)
                     if self.recorder and self.recorder.active and scores:
                         self.recorder.event("icons", **{f"p{k}": v for k, v in scores.items()})
@@ -243,17 +301,81 @@ class PositionService(QObject):
                 self.status.emit(f"📍 {pos.x:.0f}, {pos.y:.0f} · {pos.score:.0%} · {mode}")
             else:
                 fails += 1
+                if self.minimap_visible and fails >= 3:
+                    self._set_scene("unknown_area")     # мини-карта есть, а место не узнаётся
                 if fails == 3 and had_pos:
                     had_pos = False
                     self.lost.emit()
                 if fails >= 3 and black:
                     self.status.emit("Захват экрана чёрный: переключи игру в оконный или "
                                      "безрамочный режим (или это экран загрузки)")
+                elif fails >= 3 and not self.minimap_visible:
+                    self.status.emit("Мини-карты не видно (меню, загрузка, большая карта) — жду")
                 elif fails >= 3:
                     self.status.emit("Позиция не найдена (меню, загрузка или мини-карта "
                                      "вне области — проверь калибровку)")
             stop.wait(self.interval_s if fails == 0 else self.interval_s * 2)
         sct.close()
+
+    # ---------- что сейчас в игре ----------
+    def _set_scene(self, name: str) -> None:
+        if name != getattr(self, "_scene", None):
+            self._scene = name
+            self.scene.emit(name)
+
+    def _detect_scene(self, sct, mon: dict) -> None:
+        """Мини-карты нет: загрузка, катсцена или меню/большая карта/диалог.
+        Кадр окна игры разбирается только в памяти (яркость и чёрные полосы), не
+        сохраняется; не чаще раза в секунду и только когда игра активна."""
+        if not self._game_foreground():
+            self._set_scene("background")
+            return
+        now = time.monotonic()
+        if now - getattr(self, "_scene_t", 0.0) < 1.0:
+            return
+        self._scene_t = now
+        frame = np.array(sct.grab(mon))[::8, ::8, :3]
+        self._set_scene(classify_scene(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)))
+
+    # ---------- поиск позиции: быстро здесь, медленно — в фоне ----------
+    def set_anchors(self, points: list[tuple[float, float]]) -> None:
+        self.anchors = list(points)
+        tr = self._tracker
+        if tr is not None:
+            tr.set_anchors(self.anchors)
+
+    def _locate(self, tr: PositionTracker, gray, ui_h: float, bgr) -> Position | None:
+        with self._lock:
+            sq = tr.prep(gray, ui_h)
+            if sq is None:
+                return None
+            pos = tr.locate_fast(sq, ui_h, bgr)
+        if pos is None:
+            pos = self._slow_step(tr, sq, ui_h, bgr)
+        if pos is not None and pos.reliable:
+            with self._lock:
+                tr.accept(pos)
+        return pos
+
+    def _slow_step(self, tr: PositionTracker, sq, ui_h: float, bgr) -> Position | None:
+        """Забрать готовый результат фонового поиска или запустить новый."""
+        job = self._slow
+        if job is not None:
+            fut, t0, jtr = job
+            if not fut.done():
+                return None                       # ещё ищет — цикл идёт дальше
+            self._slow = None
+            try:
+                pos = fut.result()
+            except Exception:  # noqa: BLE001 — сбой поиска не должен ронять поток
+                pos = None
+            if pos is not None and jtr is tr and time.monotonic() - t0 <= SLOW_RESULT_MAX_AGE:
+                return pos
+        last = tr.last
+        hint = (last.x, last.y, time.monotonic() - tr.last_t) if last is not None else None
+        self._slow = (self._slow_pool.submit(tr.locate_slow, sq.copy(), ui_h, bgr.copy(), hint),
+                      time.monotonic(), tr)
+        return None
 
     def _plausible(self, pos: Position, tr: PositionTracker) -> bool:
         """Далёкий прыжок от недавней позиции принимаем, только если JUMP_CONFIRM
@@ -267,6 +389,9 @@ class PositionService(QObject):
         if math.hypot(pos.x - last.x, pos.y - last.y) <= JUMP_UNITS:
             self._jump = []
             return True
+        if pos.anchor and pos.reliable:
+            self._jump = []
+            return True                       # у телепорта с уверенностью — это и есть телепорт
         self._jump = [p for p in getattr(self, "_jump", [])
                       if math.hypot(p.x - pos.x, p.y - pos.y) <= JUMP_AGREE]
         self._jump.append(pos)
@@ -290,12 +415,9 @@ class PositionService(QObject):
         if now - getattr(self, "_uid_t", -UID_EVERY_S) < UID_EVERY_S or not self._game_foreground():
             return
         self._uid_t = now
-        if self._ocr is None:
-            from .ocr import ScreenOcr
-            self._ocr = ScreenOcr("ru")
-        if not self._ocr.ready:
+        if not self._get_ocr().ready:
             return
-        reg = region_from_frac(UID_FRAC, mon)
+        reg = region_from_frac(UID_FRAC, mon, "uid")
         frame = cv2.cvtColor(np.array(sct.grab(reg)), cv2.COLOR_BGRA2BGR)
         text = "".join(self._ocr.read(frame, upscale=2.0)).replace(" ", "")
         m = re.search(r"\d{9,10}", text)
@@ -306,27 +428,43 @@ class PositionService(QObject):
         """OCR области плашки подбора — только у сундука и только когда активна игра."""
         if not self.read_pickup or not self.pickup_frac or not self._game_foreground():
             return
-        if self._ocr is None:
-            from .ocr import ScreenOcr
-            self._ocr = ScreenOcr("ru")
-        if not self._ocr.ready:
+        if not self._get_ocr().ready:
             return
-        reg = region_from_frac(self.pickup_frac, mon)
+        reg = region_from_frac(self.pickup_frac, mon, "pickup_region")
         frame = cv2.cvtColor(np.array(sct.grab(reg)), cv2.COLOR_BGRA2BGR)
-        lines = self._ocr.read(frame)
+        lines = self._ocr.read(frame, upscale=ocr_upscale(self.ui_s))
         self.pickupText.emit(lines)      # текст наружу только в окно, в запись — нет
 
+    def _get_ocr(self):
+        if self._ocr is None:
+            from .ocr import ScreenOcr
+            self._ocr = ScreenOcr("en-US" if self.game_lang == "en" else "ru")
+        return self._ocr
+
     def _check_prompts(self, sct, mon: dict) -> None:
-        """Подсказки взаимодействия («F Открыть») — для вывода «сундук на месте/нет»."""
+        """Подсказки взаимодействия («F ▶ Богатый сундук») — сундук на месте/нет и
+        какой именно. Эталон-картинка, если снят; иначе OCR (только у сундука)."""
         det = self.prompt_detector
-        if det is None or not self.prompt_frac:
+        if not self.prompt_frac:
+            return
+        if det is None or not det.ready:
+            if not self.read_prompts or not self._game_foreground() or not self._get_ocr().ready:
+                return
+            reg = region_from_frac(self.prompt_frac, mon, "prompt_region")
+            frame = cv2.cvtColor(np.array(sct.grab(reg)), cv2.COLOR_BGRA2BGR)
+            found = parse_prompt_lines(self._ocr.read(frame, upscale=ocr_upscale(self.ui_s)),
+                                       self.game_lang)
+            self.prompts.emit(found)          # текст наружу не уходит — только вывод
+            rec = self.recorder
+            if rec and rec.active:
+                rec.prompt(frame, found)
             return
         rec = self.recorder
         if not det.ready and not (rec and rec.active):
             return
-        reg = region_from_frac(self.prompt_frac, mon)
+        reg = region_from_frac(self.prompt_frac, mon, "prompt_region")
         frame = cv2.cvtColor(np.array(sct.grab(reg)), cv2.COLOR_BGRA2BGR)
-        found = det.detect(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), mon["height"]) \
+        found = det.detect(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), ui_height(mon)) \
             if det.ready else {}
         if det.ready:
             self.prompts.emit(found)
@@ -342,8 +480,8 @@ class PositionService(QObject):
         if not self._game_foreground():
             return
         rec.boost = self.read_pickup          # у сундука — чаще плашку/подсказку
-        rec.minimap(cv2.cvtColor(shot, cv2.COLOR_BGRA2BGR), pos, mon["height"])
+        rec.minimap(cv2.cvtColor(shot, cv2.COLOR_BGRA2BGR), pos, ui_height(mon))
         if self.pickup_frac:
-            reg = region_from_frac(self.pickup_frac, mon)
+            reg = region_from_frac(self.pickup_frac, mon, "pickup_region")
             rec.pickup(lambda: cv2.cvtColor(np.array(sct.grab(reg)), cv2.COLOR_BGRA2BGR))
         rec.screen(lambda: cv2.cvtColor(np.array(sct.grab(mon)), cv2.COLOR_BGRA2BGR))
