@@ -8,6 +8,7 @@ from __future__ import annotations
 import functools
 import http.server
 import json
+import os
 import socketserver
 import threading
 import time
@@ -24,6 +25,7 @@ from PyQt6.QtWebEngineCore import (
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import (
+    QApplication,
     QComboBox,
     QDockWidget,
     QFileDialog,
@@ -1037,8 +1039,17 @@ class OverlayWindow(QMainWindow):
         self._log(text)
 
     def _on_update_ready(self) -> None:
+        """Скачано — закрываемся ПОЛНОСТЬЮ (скрипт обновления ждёт конца процесса).
+        Одного self.close() мало: открытый HUD/диалог держит приложение живым."""
         self._log("Обновление скачано — перезапускаюсь…")
-        QTimer.singleShot(500, self.close)       # скрипт обновления ждёт закрытия
+
+        def quit_all() -> None:
+            self.close()
+            QApplication.instance().quit()
+            # страховка: если что-то всё же держит процесс — выходим жёстко
+            threading.Timer(5.0, lambda: os._exit(0)).start()
+
+        QTimer.singleShot(500, quit_all)
 
     def _on_data_updated(self, text: str) -> None:
         self._log(text)

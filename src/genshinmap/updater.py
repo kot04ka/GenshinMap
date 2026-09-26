@@ -108,15 +108,33 @@ class Updater(QObject):
         exe = app_dir / "GenshinMap.exe"
         pid = os.getpid()
         script = tmp / "update.cmd"
-        script.write_text(
-            "@echo off\r\n"
-            "chcp 65001 >nul\r\n"
-            f":wait\r\ntasklist /FI \"PID eq {pid}\" | find \"{pid}\" >nul\r\n"
-            "if not errorlevel 1 (timeout /t 1 >nul & goto wait)\r\n"
-            f"robocopy \"{src}\" \"{app_dir}\" /E /R:3 /W:1 /NFL /NDL /NJH /NJS >nul\r\n"
-            f"start \"\" \"{exe}\"\r\n"
-            f"rmdir /S /Q \"{tmp}\"\r\n",
-            encoding="utf-8")
+        # ждём закрытия не дольше ~30 с, потом завершаем старую версию сами;
+        # всё скрыто: консоль и её дочерние tasklist/find окна не показывают
+        # системные утилиты — полными путями: в PATH бывает чужой find (из Git и т.п.)
+        sysdir = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32"
+        tl, fd, tk, to, rc = (f'"{sysdir / n}"' for n in
+                              ("tasklist.exe", "find.exe", "taskkill.exe", "timeout.exe", "robocopy.exe"))
+        lines = [
+            "@echo off",
+            "chcp 65001 >nul",
+            "set n=0",
+            ":wait",
+            f'{tl} /FI "PID eq {pid}" | {fd} "{pid}" >nul',
+            "if errorlevel 1 goto copy",
+            "set /a n+=1",
+            f"if %n% GEQ 30 ({tk} /PID {pid} /F >nul 2>&1 & {to} /t 2 >nul & goto copy)",
+            f"{to} /t 1 >nul",
+            "goto wait",
+            ":copy",
+            f'{rc} "{src}" "{app_dir}" /E /R:3 /W:1 /NFL /NDL /NJH /NJS >nul',
+            f'start "" "{exe}"',
+            # самоудаление: (goto) выходит из скрипта, и его папку можно стереть
+            f'(goto) 2>nul & rmdir /S /Q "{tmp}"',
+        ]
+        script.write_text("\r\n".join(lines) + "\r\n", encoding="utf-8")
+        # CREATE_NO_WINDOW без DETACHED_PROCESS: скрытая консоль наследуется
+        # tasklist/find/timeout — никаких всплывающих окон
         subprocess.Popen(["cmd", "/c", str(script)],
-                         creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
+                         creationflags=subprocess.CREATE_NO_WINDOW
+                         | subprocess.CREATE_NEW_PROCESS_GROUP,
                          close_fds=True)
