@@ -3,8 +3,10 @@
     python tools/build_exe.py
 
 Результат:
-    dist/GenshinMap/            папка с GenshinMap.exe и данными
-    dist/GenshinMap.zip         то же, архивом — его и отправлять
+    build/release/GenshinMap/      папка с GenshinMap.exe и данными
+    build/release/GenshinMap.zip   то же, архивом — его и отправлять
+
+Запускать программу из build/ НЕ нужно: распакуй архив в свою папку.
 
 В сборку идут только общие данные (карты, иконки, референсы позиции, страница
 карты). Личные файлы — прогресс, настройки, записи отладки — НЕ копируются:
@@ -18,8 +20,10 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DIST = ROOT / "dist"
+# Собираем ТОЛЬКО в служебную папку build/: её никто не запускает. Раньше сборка
+# шла в dist/ и перезаписывала программу, запущенную оттуда (терялся прогресс).
 BUILD = ROOT / "build"
+DIST = BUILD / "release"
 APP = "GenshinMap"
 OUT = DIST / APP
 

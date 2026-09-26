@@ -34,7 +34,7 @@ def main() -> None:
     run("git", "add", "-A")
     run("git", "commit", "-m", f"GenshinMap {version}")
     run("git", "push")
-    run(GH, "release", "create", f"v{version}", "dist/GenshinMap.zip",
+    run(GH, "release", "create", f"v{version}", "build/release/GenshinMap.zip",
         "--title", f"GenshinMap {version}", "--notes", notes or f"Версия {version}")
     print(f"\nГотово: v{version} опубликована — копии обновятся сами.")
 

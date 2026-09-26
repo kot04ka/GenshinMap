@@ -46,7 +46,7 @@ python main.py
 
 ## Сборка и выпуск версии
 ```powershell
-python tools\build_exe.py                        # dist\GenshinMap\ и dist\GenshinMap.zip
+python tools\build_exe.py                        # build\release\GenshinMap.zip
 python tools\release.py 1.0.1 "что нового"       # версия -> сборка -> коммит -> релиз
 ```
 В сборку идут только общие данные; прогресс, настройки и записи пользователя — нет.

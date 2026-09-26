@@ -41,7 +41,13 @@ BASE_HEIGHT = 1080          # масштаб мини-карты нормиру�
 DEFAULT_SCALE = 1.66
 # Диапазон перебора масштаба: узкий вокруг реального — слишком мелкие масштабы
 # дают крошечный шаблон, который «совпадает» с чем угодно.
-SCALE_SWEEP = tuple(round(0.9 * 1.12 ** i, 3) for i in range(10))   # 0.9 … ~2.5
+SCALE_SWEEP = tuple(round(0.45 * 1.13 ** i, 3) for i in range(16))   # 0.45 … ~2.8
+# Игра меняет приближение мини-карты: обычно 1.66, в городах (столица Снежной и
+# т.п.) — сильно приближена (~0.575). Эти масштабы пробуем всегда (быстро);
+# широкий перебор — только если ни один не подошёл (раз в SWEEP_EVERY неудач).
+KNOWN_SCALES = (DEFAULT_SCALE, 0.575)
+SWEEP_EVERY = 5
+SCALE_SWITCH = 0.15       # найденный масштаб отличается больше — переключаемся на него
 PEAKS_SWEEP = 4             # кандидатов с каждого масштаба, пока масштаб неизвестен
                             # (проверяются все: 13 масштабов x 4 = 52 окна, это быстро)
 PEAKS_KNOWN = 30            # кандидатов, когда масштаб уже откалиброван
@@ -247,7 +253,15 @@ class PositionTracker:
                 best = Position(round(x, 1), round(y, 1), float(val), s)
         return best
 
-    def locate_global(self, sq: np.ndarray) -> Position | None:
+    def _scales(self) -> tuple[float, ...]:
+        """Текущий масштаб первым, затем остальные известные (без повторов)."""
+        out = [self.scale] if self.scale else []
+        for k in KNOWN_SCALES:
+            if all(abs(k - s) / s > 0.05 for s in out):
+                out.append(k)
+        return tuple(out)
+
+    def locate_global(self, sq: np.ndarray, sweep: bool = False) -> Position | None:
         """Поиск по всей карте.
 
         1) грубо: на уменьшенном референсе берём по несколько лучших пиков с
@@ -256,8 +270,8 @@ class PositionTracker:
         2) точно: каждый кандидат проверяем на полном референсе в маленьком окне;
         3) отрыв лучшего кандидата от второго (в другом месте) = однозначность.
         """
-        sweep = not self.scale
-        scales = SCALE_SWEEP if sweep else (self.scale,)
+        sweep = sweep or not self.scale
+        scales = SCALE_SWEEP if sweep else self._scales()
         n_peaks = PEAKS_SWEEP if sweep else PEAKS_KNOWN
         # при переборе шаг масштаба 1.2 — проверяем плотнее, чтобы попасть в истинный
         fine_steps = (0.92, 0.96, 1.0, 1.04, 1.08) if sweep else (0.96, 1.0, 1.04)
@@ -304,19 +318,30 @@ class PositionTracker:
             return None
         pos = None
         if self.last and self.scale and time.monotonic() - self.last_t < 3.0:
-            pos = self._search_window(sq, self.last.x, self.last.y, 60, (self.scale,))
-            if pos and pos.score >= LOCAL_OK:
-                pos.local = True
-            else:
+            # локально: текущий масштаб, а если нет — другие известные (вошёл в город)
+            for s in self._scales():
+                pos = self._search_window(sq, self.last.x, self.last.y, 60, (s,))
+                if pos and pos.score >= LOCAL_OK:
+                    pos.local = True
+                    break
                 pos = None
         if pos is None:
             pos = self.locate_global(sq)
+            if (pos is None or not pos.reliable) and self.scale:
+                self._global_fails = getattr(self, "_global_fails", 0) + 1
+                if self._global_fails % SWEEP_EVERY == 0:      # изредка — широкий перебор
+                    swept = self.locate_global(sq, sweep=True)
+                    if swept is not None and (pos is None or swept.score > pos.score):
+                        pos = swept
         if pos is None:
             return None
         if pos.reliable:
+            self._global_fails = 0
             self.last, self.last_t = pos, time.monotonic()
             if not self.scale and pos.score >= CALIBRATE_OK:
                 self.scale = pos.scale     # масштаб найден — дальше ищем только с ним
+            elif self.scale and abs(pos.scale - self.scale) / self.scale > SCALE_SWITCH:
+                self.scale = pos.scale     # игра приблизила/отдалила мини-карту (город)
         return pos
 
     # ---------- значки на мини-карте ----------
