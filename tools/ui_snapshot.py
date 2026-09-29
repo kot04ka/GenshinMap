@@ -10,10 +10,15 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+# окно проверки не показываем на экране: оно могло всплыть поверх игры и закрыть
+# мини-карту (так терялась позиция). --show — показать (для отладки глазами)
+if "--show" not in sys.argv:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import QTimer, QUrl
 from PyQt6.QtWebEngineCore import QWebEnginePage
@@ -67,6 +72,7 @@ def main() -> int:
     ap.add_argument("--js-file", default="", help="то же, но код из файла (длинные сценарии)")
     ap.add_argument("--wait", type=float, default=4.0, help="секунд ждать после загрузки")
     ap.add_argument("--lang", default="ru", help="ru / en; для en ищет непереведённый русский текст")
+    ap.add_argument("--show", action="store_true", help="показать окно на экране")
     ap.add_argument("--out", default=str(PROJECT_ROOT / "scratch" / "ui_snapshot.png"))
     a = ap.parse_args()
     if a.js_file:

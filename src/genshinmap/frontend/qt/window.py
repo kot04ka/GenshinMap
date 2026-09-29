@@ -1381,7 +1381,28 @@ class OverlayWindow(QMainWindow):
             self._prompt_open_t = self._prompts_t
             self._prompt_rarity = found.get("rarity") or ""
             self._prompt_seen = True     # подсказки сундуков в этой сессии читаются
+            # и запоминаем навсегда (для этой калибровки): «нет на месте» можно доверять
+            region = self.settings.get("prompt_region")
+            if region and self.settings.get("prompt_verified") != region:
+                self.settings.set("prompt_verified", region)
         self._chest_prompt_gone(found)
+
+    def _prompts_verified(self) -> bool:
+        """Подсказки сундуков точно читаются: в этой сессии или когда-то раньше с той же
+        калибровкой. Иначе отсутствие подсказки ничего не значит (не видим, а не «нет»)."""
+        if getattr(self, "_prompt_seen", False):
+            return True
+        region = self.settings.get("prompt_region")
+        if not region:
+            return False
+        if self.settings.get("prompt_verified") == region:
+            return True
+        # раньше отметку не запоминали: есть наблюдения «сундук на месте» по подсказке —
+        # значит, чтение подсказок уже работало
+        if any(o.get("state") == "present" for o in self.observations.data.values()):
+            self.settings.set("prompt_verified", region)
+            return True
+        return False
 
     def _chest_prompt_gone(self, found: dict) -> None:
         """F нажата, когда на экране была подсказка сундука, и она пропала, а игрок
@@ -1631,13 +1652,24 @@ class OverlayWindow(QMainWindow):
         for act in self.auto_marker.update(pos.x, pos.y, self.store.collected,
                                            prompts=prompts, probable=self.store.probable,
                                            icons=icons, valuables_by_pickup=self._ocr_ok,
-                                           absence=getattr(self, "_prompt_seen", False)):
+                                           absence=self._prompts_verified(),
+                                           absence_marked=self._absence_near(pos)):
             c = act.cand
             what = self.auto_marker.describe(c.label_id)
             if act.action == "probable" and self._quest_open(c.point_id):
                 continue                  # сундук появляется по заданию — «нет на месте» ничего не значит
+            if (act.action == "probable" and c.point_id in self.store.collected
+                    and c.point_id not in self.store.probable):
+                continue                  # уже отмечен (в т.ч. «по отсутствию») — не повторяем
             if act.action == "collected":
                 self._do_mark(c, pos, act.reason)
+            elif act.action == "probable" and act.kind == "chest" \
+                    and self.settings.get("absence_instant", True) \
+                    and c.point_id not in self.store.probable:
+                # сундука нет там, где он должен стоять, а подсказки читаются — собран
+                # (появится подсказка — отметка снимется сама; Ctrl+Alt+Z — отменить)
+                self.observations.record(c.point_id, "absent", act.reason)
+                self._do_mark(c, pos, "сундука нет на месте — уже собран")
             elif act.action == "probable" and self.settings.get("absence_mark", True) \
                     and self._absent_again(c.point_id):
                 # второй заход в другой раз — сундука снова нет: собран
@@ -1658,6 +1690,9 @@ class OverlayWindow(QMainWindow):
                 # тот же заход (стоит рядом): обновляем время — второй заход считается,
                 # только если игрок уходил и вернулся
                 self.observations.record(c.point_id, "absent", act.reason)
+            elif act.action == "present" and c.point_id not in self.store.probable \
+                    and c.point_id not in self.store.collected:
+                self.observations.record(c.point_id, "present", act.reason)
             elif act.action == "present":
                 self.observations.record(c.point_id, "present", act.reason)
                 self.store.unmark(c.point_id)
@@ -1668,6 +1703,14 @@ class OverlayWindow(QMainWindow):
                 self.recorder.event("seen", point=c.point_id)
 
     SECOND_VISIT_S = 600          # второй заход — не раньше чем через 10 минут
+
+    def _absence_near(self, pos) -> set[str]:
+        """Отмеченные «по отсутствию» сундуки рядом (дёшево: только кандидаты у игрока)."""
+        labels = self.auto_marker.labels_by_kind.get("chest", ())
+        near = self.map_index.candidates(labels, pos.x, pos.y, set(), 15)
+        return {c.point_id for c in near
+                if c.point_id in self.store.collected
+                and (self.observations.get(c.point_id) or {}).get("state") == "absent"}
 
     def _absent_again(self, point_id: str) -> bool:
         """Сундука уже не было в прошлый заход (и это был другой заход)."""

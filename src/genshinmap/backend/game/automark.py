@@ -17,6 +17,7 @@
 """
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass
 
@@ -52,6 +53,11 @@ ICON_ABSENT_N = 3     # сколько кадров подряд его нет, 
 ICON_NEAR = 25        # игрок должен был подойти хотя бы на столько
 WATCH_RADIUS = 170    # за значками каких точек следим (≈ радиус мини-карты)
 VALUABLE_OCR_NEAR = 40  # окулус «Получено» сверяем с точками в этом радиусе
+# Окулус собирается касанием: прошёл через его место, а «Получено» не пришло — его уже
+# нет. Высоты мы не знаем (окулус бывает на крыше над тобой) — поэтому «вероятно».
+VALUABLE_TOUCH = 2.5    # прошёл так близко к месту окулуса
+VALUABLE_LEAVE = 8.0    # и отошёл дальше этого
+VALUABLE_WAIT_S = 3.0   # «Получено» за это время не пришло
 
 
 def name_stem(name: str, lang: str = "ru") -> str:
@@ -136,6 +142,7 @@ class AutoMarker:
         self._chest: dict[str, float] = {}   # point_id -> с какого момента стоим вплотную
         self._seen_present: set[str] = set()
         self._icon: dict[str, dict] = {}     # point_id -> история значка на мини-карте
+        self._passed: dict[str, float] = {}  # окулус: point_id -> когда прошли через его место
 
     def register_label(self, label_id: int, name: str, kind: str) -> None:
         """Дополнительная категория (свои точки) с заданным типом."""
@@ -172,6 +179,7 @@ class AutoMarker:
         self._since.clear()
         self._chest.clear()
         self._icon.clear()
+        self._passed.clear()
 
     # ---------- сундук: нажатие F ----------
     def on_interact(self, x: float, y: float, collected: set[str],
@@ -246,7 +254,8 @@ class AutoMarker:
     def update(self, x: float, y: float, collected: set[str],
                prompts: dict | None = None, probable: set[str] | None = None,
                icons: dict | None = None, now: float | None = None,
-               valuables_by_pickup: bool = False, absence: bool = True) -> list[Action]:
+               valuables_by_pickup: bool = False, absence: bool = True,
+               absence_marked: set[str] | None = None) -> list[Action]:
         """Вызывать на каждую надёжную позицию. Возвращает, что сделать с точками.
 
         prompts — подсказки в кадре ({"open": 0.9}) или None (эталона нет);
@@ -259,9 +268,32 @@ class AutoMarker:
         self._touch(x, y, collected, icons, now, out, skip_valuable=valuables_by_pickup)
         if icons is not None and not valuables_by_pickup:
             self._icons(x, y, collected, icons, out)
+        if valuables_by_pickup and absence and "valuable" in self.rules:
+            self._valuable_absence(x, y, collected, now, out)
         if prompts is not None and "chest" in self.rules:
-            self._chest_memory(x, y, collected, probable or set(), prompts, now, out, absence)
+            # отмеченные «по отсутствию» проверяем снова: подсказка есть — сундук на месте
+            recheck = (probable or set()) | (absence_marked or set())
+            self._chest_memory(x, y, collected, recheck, prompts, now, out, absence)
         return out
+
+    def _valuable_absence(self, x, y, collected, now, out) -> None:
+        """Окулус: прошёл через его место, «Получено» не пришло — вероятно, собран раньше."""
+        labels = self.labels_by_kind.get("valuable", ())
+        for c in self.index.candidates(labels, x, y, collected, VALUABLE_TOUCH):
+            if not self.index.layer_of.get(str(c.point_id), 0):   # в пещерах уровень не знаем
+                self._passed.setdefault(c.point_id, now)
+        for pid, t0 in list(self._passed.items()):
+            if pid in collected:
+                del self._passed[pid]
+                continue
+            pt = self.index.by_id.get(pid)
+            if pt is None:
+                del self._passed[pid]
+                continue
+            if math.hypot(pt[1] - x, pt[2] - y) >= VALUABLE_LEAVE and now - t0 >= VALUABLE_WAIT_S:
+                del self._passed[pid]
+                out.append(Action("probable", Candidate(pid, pt[0], math.hypot(pt[1] - x, pt[2] - y)),
+                                  "valuable", "прошёл через место — «Получено» не было"))
 
     def _touch(self, x, y, collected, icons, now, out, skip_valuable=False) -> None:
         """Телепорты/статуи — подошёл; окулусы — только если нет OCR и значка."""

@@ -26,7 +26,7 @@ import concurrent.futures as cf
 import math
 import time
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import cv2
@@ -82,6 +82,13 @@ ICON_HALF_1080 = 9          # полуразмер значка на мини-к
 ICON_VIEW_FRAC = 0.40       # значки дальше этой доли стороны от центра — у края, не смотрим
 ICON_ARROW_FRAC = 0.07      # ближе — под стрелкой игрока, не смотрим
 _HEADERS = {"User-Agent": "Mozilla/5.0", "Referer": "https://act.hoyolab.com/"}
+# «Стоит на месте»: мини-карта не сдвинулась относительно кадра последней надёжной
+# позиции — позиция та же, даже если совпадение с картой просело (повернул камеру —
+# сменился светлый конус обзора; однообразный луг). Проверено на записях: стоя
+# сдвиг 0 px при уверенности 0.75–1.0, на ходу — несколько px.
+STILL_SHIFT_PX = 1.5        # сдвиг картинки не больше этого (≈2.5 мир. ед.)
+STILL_OK = 0.6              # уверенность фазовой корреляции
+STILL_MAX_AGE = 120.0       # с кадра надёжной позиции прошло не больше, с
 
 
 @dataclass
@@ -94,6 +101,8 @@ class Position:
     margin: float = 1.0   # отрыв от второго кандидата (для глобального поиска)
     water: bool = False   # найдено по форме воды (запасной способ)
     anchor: bool = False  # найдено у телепорта/статуи (после телепорта)
+    still: bool = False   # игрок стоит на месте (мини-карта не сдвинулась)
+    frame: np.ndarray | None = field(default=None, repr=False, compare=False)  # кадр, по которому нашли
 
     @property
     def reliable(self) -> bool:
@@ -240,6 +249,8 @@ class PositionTracker:
                                  interpolation=cv2.INTER_AREA)
         self.scale = scale                                # мир. единиц на px мини-карты @1080p
         self.last: Position | None = None
+        self.still_ref: Position | None = None     # эталон для «стоит на месте»
+        self.still_ref_t = 0.0
         self.last_t = 0.0
         self.water = None
         if water_path is not None and Path(water_path).exists():
@@ -505,9 +516,41 @@ class PositionTracker:
             self.accept(pos)
         return pos
 
+    @staticmethod
+    def _edges(sq: np.ndarray) -> np.ndarray:
+        """Границы на мини-карте: светлый конус обзора (плавная засветка) их почти не меняет."""
+        a = sq.astype(np.float32)
+        return cv2.magnitude(cv2.Sobel(a, cv2.CV_32F, 1, 0, ksize=3),
+                             cv2.Sobel(a, cv2.CV_32F, 0, 1, ksize=3))
+
+    def still_at(self, sq: np.ndarray) -> Position | None:
+        """Игрок стоит там же, где была последняя надёжная позиция, — или None."""
+        ref = self.still_ref
+        if (ref is None or ref.frame is None or ref.frame.shape != sq.shape
+                or time.monotonic() - self.still_ref_t > STILL_MAX_AGE):
+            return None
+        a = self._edges(ref.frame)
+        win = getattr(self, "_hann", None)
+        if win is None or win.shape != a.shape:
+            win = self._hann = cv2.createHanningWindow(a.shape[::-1], cv2.CV_32F)
+        (dx, dy), resp = cv2.phaseCorrelate(a, self._edges(sq), win)
+        if resp < STILL_OK or math.hypot(dx, dy) > STILL_SHIFT_PX:
+            return None
+        return Position(ref.x, ref.y, max(ref.score, LOCAL_OK), ref.scale, local=True,
+                        still=True, frame=ref.frame)
+
     def locate_fast(self, sq: np.ndarray, screen_h: int,
                     minimap_bgr: np.ndarray | None = None) -> Position | None:
         """Трекинг рядом с прошлой позицией (миллисекунды) или None."""
+        pos = self._locate_fast(sq, screen_h, minimap_bgr)
+        if pos is None:
+            pos = self.still_at(sq)
+        elif pos.frame is None:
+            pos.frame = sq
+        return pos
+
+    def _locate_fast(self, sq: np.ndarray, screen_h: int,
+                     minimap_bgr: np.ndarray | None = None) -> Position | None:
         pos = None
         # в неразведанных местах (прошлую позицию нашли по воде) — сначала вода рядом
         if (minimap_bgr is not None and self.water is not None and self.last is not None
@@ -538,6 +581,13 @@ class PositionTracker:
                     hint: tuple[float, float, float] | None = None) -> Position | None:
         """Поиск, когда игрок потерян (секунды). hint — (x, y, возраст с) последней
         известной позиции. Сам ничего не запоминает — результат принимает accept()."""
+        pos = self._locate_slow(sq, screen_h, minimap_bgr, hint)
+        if pos is not None and pos.frame is None:
+            pos.frame = sq
+        return pos
+
+    def _locate_slow(self, sq: np.ndarray, screen_h: int, minimap_bgr: np.ndarray | None = None,
+                     hint: tuple[float, float, float] | None = None) -> Position | None:
         # у телепортов — доли секунды: после телепорта это почти всегда оно
         pos = self.locate_anchors(sq)
         if pos is None or not pos.reliable:
@@ -563,6 +613,9 @@ class PositionTracker:
         if pos.reliable:
             self._global_fails = 0
             self.last, self.last_t = pos, time.monotonic()
+            if not pos.still and pos.frame is not None:
+                # кадр найденной (а не «стоит на месте») позиции — эталон для still_at
+                self.still_ref, self.still_ref_t = pos, time.monotonic()
             if not self.scale and pos.score >= CALIBRATE_OK:
                 self.scale = pos.scale     # масштаб найден — дальше ищем только с ним
             elif self.scale and abs(pos.scale - self.scale) / self.scale > SCALE_SWITCH:

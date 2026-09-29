@@ -708,5 +708,12 @@
 "Уровень: поверхность или этаж пещеры": "Level: surface or cave floor",
 "Пещеры: поверхность затемнена": "Caves: the surface is dimmed",
 "На поверхность": "To the surface",
-"Вернуться на поверхность (Esc)": "Back to the surface (Esc)"
+"Вернуться на поверхность (Esc)": "Back to the surface (Esc)",
+"Сундука нет на месте — сразу считать собранным": "Chest isn't there — count it as collected right away",
+"Стоишь там, где должен быть сундук, а подсказки «F ▶ … сундук» нет. Только на поверхности, не после загадок и не за задание. Появится подсказка — отметка снимется, Ctrl+Alt+Z — отменить.": "You stand where a chest should be, but there's no “F ▶ … chest” prompt. Surface only, not puzzle or quest chests. If the prompt appears later, the mark is removed; Ctrl+Alt+Z — undo.",
+"Окулус: прошёл через его место — «вероятно собран»": "Oculus: walked through its spot — “probably collected”",
+"Окулус собирается касанием: «Получено» не пришло — его там уже нет. Высоты мы не знаем (бывает на крыше), поэтому сначала «вероятно», а во второй заход — «собрано». Так же и с сундуками, если отключить пункт выше.": "An oculus is collected by touch: no “Obtained” — it's already gone. We don't know the height (it can be on a roof), so first “probably”, then “collected” on the second pass. Same for chests if the option above is off.",
+"сундука нет на месте — уже собран": "the chest isn't there — already collected",
+"прошёл через место — «Получено» не было": "walked through the spot — no “Obtained”",
+"уже отмечен": "already marked"
 }

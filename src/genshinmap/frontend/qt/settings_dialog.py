@@ -293,14 +293,20 @@ class SettingsDialog(QDialog):
             on = rules.get(kind, {}).get("on", DEFAULT_RULES[kind]["on"])
             self.cb_kinds[kind] = self._check(c, text, desc, on)
         c = self._card(lay)
+        self.cb_absence_now = self._check(
+            c, "Сундука нет на месте — сразу считать собранным",
+            "Стоишь там, где должен быть сундук, а подсказки «F ▶ … сундук» нет. Только на "
+            "поверхности, не после загадок и не за задание. Появится подсказка — отметка снимется, "
+            "Ctrl+Alt+Z — отменить.", s.get("absence_instant", True))
         self.cb_absence = self._check(
-            c, "Сундука нет на месте во второй заход — считать собранным",
-            "Первый раз — «❔ вероятно», через 10+ минут снова нет — «✓ собрано». "
-            "Только сундуки на поверхности, не после загадок.", s.get("absence_mark", True))
+            c, "Окулус: прошёл через его место — «вероятно собран»",
+            "Окулус собирается касанием: «Получено» не пришло — его там уже нет. Высоты мы не знаем "
+            "(бывает на крыше), поэтому сначала «вероятно», а во второй заход — «собрано». "
+            "Так же и с сундуками, если отключить пункт выше.", s.get("absence_mark", True))
         lay.addStretch(1)
 
         def sync(on: bool) -> None:
-            for cb in [*self.cb_kinds.values(), self.cb_absence]:
+            for cb in [*self.cb_kinds.values(), self.cb_absence, self.cb_absence_now]:
                 cb.setEnabled(on)
 
         self.cb_auto.toggled.connect(sync)
@@ -508,6 +514,7 @@ class SettingsDialog(QDialog):
         result["track_interval"] = round(self.sp_interval.value(), 2)
         result["auto_mark_enabled"] = self.cb_auto.isChecked()
         result["absence_mark"] = self.cb_absence.isChecked()
+        result["absence_instant"] = self.cb_absence_now.isChecked()
         result["auto_record"] = self.cb_record.isChecked()
         result["run_as_admin"] = self.cb_admin.isChecked()
         result["ui_lang"] = self.cb_ui_lang.currentData()

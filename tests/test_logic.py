@@ -161,6 +161,38 @@ def test_absence_only_for_plain_surface_chests(tmp_path):
     assert [a.cand.point_id for a in acts if a.action == "probable"] == ["1"]
 
 
+def test_oculus_passed_without_pickup_is_probable(marker):
+    """Прошёл через место окулуса, «Получено» не пришло, отошёл — «вероятно собран»."""
+    acts = marker.update(300, 301, set(), now=0.0, valuables_by_pickup=True)
+    acts += marker.update(300, 305, set(), now=1.0, valuables_by_pickup=True)
+    assert not [a for a in acts if a.action == "probable"]          # ещё рядом
+    acts = marker.update(300, 320, set(), now=4.0, valuables_by_pickup=True)
+    assert [(a.cand.point_id, a.kind) for a in acts if a.action == "probable"] == [("3", "valuable")]
+    # подобрал (отмечен по «Получено») — вывода «нет на месте» нет
+    marker.update(300, 301, set(), now=10.0, valuables_by_pickup=True)
+    acts = marker.update(300, 320, {"3"}, now=20.0, valuables_by_pickup=True)
+    assert not [a for a in acts if a.action == "probable"]
+
+
+def test_oculus_absence_needs_pickup_ocr(marker):
+    """Без чтения «Получено» (или без проверенных подсказок) по отсутствию не судим."""
+    acts = marker.update(300, 301, set(), now=0.0, valuables_by_pickup=False)
+    acts += marker.update(300, 320, set(), now=5.0, valuables_by_pickup=False)
+    acts += marker.update(300, 301, set(), now=10.0, valuables_by_pickup=True, absence=False)
+    acts += marker.update(300, 320, set(), now=15.0, valuables_by_pickup=True, absence=False)
+    assert not [a for a in acts if a.action == "probable" and a.kind == "valuable"]
+
+
+def test_absence_marked_chest_rechecked(marker):
+    """Сундук, отмеченный «по отсутствию», оказался на месте (есть подсказка) — снять отметку."""
+    acts = marker.update(100, 101, {"1"}, prompts={"open": 1.0, "rarity": "обычн"}, now=0.0,
+                         absence_marked={"1"})
+    assert [a.cand.point_id for a in acts if a.action == "present"] == ["1"]
+    # обычный собранный сундук (не «по отсутствию») так не проверяется
+    acts = marker.update(100, 101, {"1"}, prompts={"open": 1.0, "rarity": "обычн"}, now=1.0)
+    assert not [a for a in acts if a.action == "present"]
+
+
 # ---------- что сейчас в игре ----------
 def test_classify_scene():
     from genshinmap.backend.vision.position_service import classify_scene
