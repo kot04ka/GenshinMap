@@ -9,7 +9,6 @@
   - стрелку у края мини-карты в сторону цели + расстояние (мини-карта Genshin
     всегда смотрит на север — стрелка совпадает с ней);
   - рядом с целью — карточку: подсказка и фото места;
-  - звук: подошёл близко — один сигнал, на месте — двойной;
   - всплывашку «🧰 Богатый сундук отмечен · Ctrl+Alt+Z — отменить» (видна и без цели).
 
 Окно HUD скрыто от захвата экрана (SetWindowDisplayAffinity): игрок его видит,
@@ -39,8 +38,8 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import QWidget
 
-NEAR_UNITS = 45        # «подходишь» — показать карточку, первый сигнал
-HERE_UNITS = 12        # «на месте» — двойной сигнал
+NEAR_UNITS = 45        # «подходишь» — показать карточку
+HERE_UNITS = 12        # «на месте»
 CARD_W = 300
 COMPASS_W = 420
 # путь «под ногами»: перспектива плоской земли (доли высоты экрана, метры ≈ единицы карты)
@@ -56,17 +55,6 @@ TOAST_MS = 4500
 WDA_EXCLUDEFROMCAPTURE = 0x11
 MINIMAP_CLIP = 0.92    # доля радиуса области мини-карты, где реально видна карта
 GOLD = "#ffd24a"
-
-
-def _beep(pattern: tuple[tuple[int, int], ...]) -> None:
-    def run():
-        with contextlib.suppress(Exception):   # нет звука — не страшно
-            import winsound
-
-            for freq, ms in pattern:
-                winsound.Beep(freq, ms)
-
-    threading.Thread(target=run, daemon=True).start()
 
 
 class NavHud(QWidget):
@@ -89,12 +77,11 @@ class NavHud(QWidget):
         self.heading: float | None = None    # куда бежит игрок, градусы (0 — север)
         # что показывать (⚙ Настройки → «Поверх игры»)
         self.show_path = self.show_compass = self.show_card = self.show_ground = True
-        self.show_toasts = self.sounds = True
+        self.show_toasts = True
         self.minimap_frac: dict = {}
         self.tip_text = ""
         self.photo: QPixmap | None = None
         self._photo_url = ""
-        self._stage = 0                      # 0 далеко, 1 близко, 2 на месте (для звука)
         self.game_active = False
         self._photo_loaded.connect(self._on_photo)
         self._toast: tuple[str, str] | None = None     # (текст, цвет)
@@ -119,7 +106,7 @@ class NavHud(QWidget):
     # ---------- данные ----------
     def set_target(self, target: dict | None) -> None:
         if (target or {}).get("pid") != (self.target or {}).get("pid"):
-            self.tip_text, self.photo, self._photo_url, self._stage = "", None, "", 0
+            self.tip_text, self.photo, self._photo_url = "", None, ""
         self.target = target
         self._refresh()
 
@@ -152,12 +139,6 @@ class NavHud(QWidget):
         self.player = (x, y)
         if scale:
             self.scale = scale
-        d = self.distance()
-        if d is not None:
-            stage = 2 if d <= HERE_UNITS else 1 if d <= NEAR_UNITS else 0
-            if stage > self._stage and self.sounds and not (self.target or {}).get("tp"):
-                _beep(((880, 120),) if stage == 1 else ((988, 110), (1319, 160)))
-            self._stage = stage if stage > self._stage or stage == 0 else self._stage
         self._refresh()
 
     def set_info(self, pid: str, card: dict) -> None:

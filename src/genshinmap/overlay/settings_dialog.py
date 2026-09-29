@@ -246,7 +246,6 @@ class SettingsDialog(QDialog):
             ("hud_compass", "Компас вверху экрана", "Куда повернуть: «↑ прямо / ↖ левее / ↗ правее» и расстояние"),
             ("hud_card", "Карточка с подсказкой и фото", "Появляется справа, когда подходишь к цели"),
             ("hud_toasts", "Сообщения «отмечено»", "На 4 секунды после авто-отметки, с отменой Ctrl+Alt+Z"),
-            ("hud_sounds", "Звуки", "Один сигнал — близко, двойной — на месте"),
         ):
             self.cb_hud[key] = self._check(c, text, desc, s.get(key, True))
         c = self._card(lay)
@@ -262,7 +261,7 @@ class SettingsDialog(QDialog):
         self._sync_hud(self.cb_hud_master.isChecked())
 
     def _sync_hud(self, on: bool) -> None:
-        for key in ("hud_path", "hud_ground", "hud_compass", "hud_card", "hud_toasts", "hud_sounds"):
+        for key in ("hud_path", "hud_ground", "hud_compass", "hud_card", "hud_toasts"):
             self.cb_hud[key].setEnabled(on)
 
     def _build_automark(self, s: dict) -> None:

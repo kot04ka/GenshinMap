@@ -1327,7 +1327,7 @@ class OverlayWindow(QMainWindow):
         h = self.hud
         h.show_path, h.show_compass = g("hud_path", True), g("hud_compass", True)
         h.show_ground = g("hud_ground", True)
-        h.show_card, h.show_toasts, h.sounds = g("hud_card", True), g("hud_toasts", True), g("hud_sounds", True)
+        h.show_card, h.show_toasts = g("hud_card", True), g("hud_toasts", True)
         h.update()
         opts = {"autoNext": bool(g("auto_next", True)), "useTp": bool(g("route_teleports", True))}
         self._js(f"window.setNavOptions && window.setNavOptions({json.dumps(opts)});")

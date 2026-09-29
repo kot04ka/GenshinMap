@@ -77,7 +77,6 @@ DEFAULT_SETTINGS: dict = {
     "hud_compass": True,       # компас вверху экрана
     "hud_card": True,          # карточка с подсказкой и фото у цели
     "hud_toasts": True,        # всплывашки «отмечено»
-    "hud_sounds": True,        # звуки «близко / на месте»
     "auto_next": True,         # собрал сундук — вести к следующему самому
     "absence_mark": True,      # сундука нет во второй заход — считать собранным
     "route_teleports": True,   # маршрут может предлагать телепорты
