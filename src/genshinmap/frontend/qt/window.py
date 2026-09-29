@@ -206,20 +206,24 @@ class _TitleBar(QWidget):
         self.setCursor(Qt.CursorShape.SizeAllCursor)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(
-            "_TitleBar{background:rgba(14,20,32,.96);border-bottom:1px solid #26314a;}"
-            "QLabel{color:#9fb3d8;font-size:12px;font-weight:600;background:transparent;}"
-            "QPushButton{background:#1c2740;border:1px solid #2c3956;border-radius:6px;"
-            "color:#eaf0fb;font-size:15px;font-weight:700;padding:0;}"
-            "QPushButton:hover{background:#2b62c4;border-color:#4d90fe;}")
+            f"_TitleBar{{background:rgba(17,26,43,.97);border-bottom:1px solid {C['line_soft']};}}"
+            f"QLabel{{color:{C['text_dim']};font-size:12px;font-weight:600;background:transparent;}}"
+            f"QPushButton{{background:{C['raised']};border:1px solid {C['line']};border-radius:7px;padding:0;}}"
+            f"QPushButton:hover{{background:{C['accent_strong']};border-color:{C['accent']};}}")
         row = QHBoxLayout(self)
-        row.setContentsMargins(10, 2, 4, 2)
+        row.setContentsMargins(8, 2, 4, 2)
         row.setSpacing(6)
-        title = QLabel("⠿  Genshin Map — тяни, чтобы передвинуть")
+        grip = QLabel()
+        grip.setPixmap(icon("move", C["text_mut"]).pixmap(14, 14))
+        row.addWidget(grip)
+        title = QLabel("Genshin Map · тяни, чтобы передвинуть")
         row.addWidget(title, 1)
-        restore = QPushButton("⤢")
+        restore = QPushButton(icon("maximize", C["text"]), "")
+        restore.setIconSize(QSize(16, 16))
         restore.setFixedSize(34, 26)
         restore.setCursor(Qt.CursorShape.PointingHandCursor)
         restore.setToolTip("Вернуть обычный вид (Ctrl+Alt+O)")
+        restore.setAccessibleName("Вернуть обычный вид")
         restore.clicked.connect(on_restore)
         row.addWidget(restore)
         self._offset = None
@@ -364,7 +368,7 @@ class OverlayWindow(QMainWindow):
         # автообновление: программа (GitHub Releases) и данные карт (HoYoLAB)
         self.updater = Updater()
         self.updater.available.connect(self._on_update_available)
-        self.updater.progress.connect(lambda pct: self.update_btn.setText(f"⬇ Скачиваю… {pct}%"))
+        self.updater.progress.connect(lambda pct: self.update_btn.setText(f"Скачиваю… {pct}%"))
         self.updater.failed.connect(self._on_update_failed)
         self.updater.ready.connect(self._on_update_ready)
         self.data_sync = DataSync()

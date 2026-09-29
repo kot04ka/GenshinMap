@@ -29,6 +29,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from genshinmap.frontend.qt.icons import icon
+
 HOYOLAB_MAP = "https://act.hoyolab.com/ys/app/interactive-map/index.html?lang=ru-ru#/map/{map_id}"
 MARKS_API = ("https://sg-public-api.hoyolab.com/common/map_user/ys_obc/v1/map/point/"
              "mark_map_point_list?map_id={map_id}&app_sn=ys_obc&lang=ru-ru")
@@ -105,7 +107,7 @@ class ImportDialog(QDialog):
         self.hoyo_status = QLabel("")
         self.hoyo_status.setWordWrap(True)
         v.addWidget(self.hoyo_status)
-        btn = QPushButton("⬇ Импортировать мои отметки с HoYoLAB")
+        btn = QPushButton(icon("download"), "Импортировать мои отметки с HoYoLAB")
         btn.clicked.connect(self._import_hoyolab)
         v.addWidget(btn)
         return w
@@ -158,7 +160,7 @@ class ImportDialog(QDialog):
         v.addWidget(self.paste, 1)
         self.app_status = QLabel("")
         v.addWidget(self.app_status)
-        btn = QPushButton("⬇ Импортировать с appsample")
+        btn = QPushButton(icon("download"), "Импортировать с appsample")
         btn.clicked.connect(self._import_appsample)
         v.addWidget(btn)
         return w

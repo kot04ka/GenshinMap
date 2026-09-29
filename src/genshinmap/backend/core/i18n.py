@@ -153,11 +153,15 @@ def _patch_setters() -> None:
 
         def f(self, *a):
             a = list(a)
-            if len(a) > arg:
-                if isinstance(a[arg], QListWidgetItem):      # строка журнала — объектом
-                    a[arg].setText(a[arg].text())
+            i = arg
+            # addAction(icon, text, …): текст идёт после иконки
+            if len(a) > i + 1 and not isinstance(a[i], (str, QListWidgetItem)):
+                i += 1
+            if len(a) > i:
+                if isinstance(a[i], QListWidgetItem):        # строка журнала — объектом
+                    a[i].setText(a[i].text())
                 else:
-                    a[arg] = tr(a[arg])
+                    a[i] = tr(a[i])
             return orig(self, *a)
 
         setattr(cls, name, f)

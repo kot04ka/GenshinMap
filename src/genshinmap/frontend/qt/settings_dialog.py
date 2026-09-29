@@ -33,29 +33,37 @@ from PyQt6.QtWidgets import (
 
 from genshinmap.backend.core.storage import DEFAULT_SETTINGS
 from genshinmap.backend.game.automark import DEFAULT_RULES
+from genshinmap.frontend.qt.icons import SETTINGS_ICONS, icon
+from genshinmap.frontend.theme import C
 
-MUTED = "#8b9ab8"
+MUTED = C["text_mut"]
 
 STYLE = """
-QListWidget#nav { background: #0f1522; border: none; border-right: 1px solid #22304a;
+QListWidget#nav { background: %(bg)s; border: none; border-right: 1px solid %(line)s;
   outline: 0; padding: 8px 6px; font-size: 13px; }
-QListWidget#nav::item { padding: 10px 12px; border-radius: 8px; margin: 2px 0; color: #c9d4e8; }
-QListWidget#nav::item:hover { background: #18233a; }
-QListWidget#nav::item:selected { background: #1f3a66; color: #ffffff; font-weight: 600; }
+QListWidget#nav::item { padding: 10px 12px; border-radius: 8px; margin: 2px 0; color: %(dim)s; }
+QListWidget#nav::item:hover { background: %(raised)s; }
+QListWidget#nav::item:selected { background: %(raised_hover)s; color: %(text)s; font-weight: 600;
+  border-left: 3px solid %(accent)s; }
 QLabel#pageTitle { font-size: 17px; font-weight: 700; color: #f1f5fc; }
 QLabel#pageLead { color: %(m)s; font-size: 12px; }
-QLabel#desc { color: %(m)s; font-size: 11.5px; }
-QLabel#warn { color: #ffb86b; font-size: 11.5px; }
-QFrame#card { background: #121a2a; border: 1px solid #22304a; border-radius: 10px; }
+QLabel#desc { color: %(m)s; font-size: 12px; }
+QLabel#warn { color: #ffb86b; font-size: 12px; }
+QFrame#card { background: %(surface)s; border: 1px solid %(line_soft)s; border-radius: 10px; }
 QFrame#card QLabel, QFrame#card QCheckBox { background: transparent; border: none; }
 QPushButton#clear { font-size: 14px; padding: 4px 0; min-height: 22px; }
 QCheckBox { spacing: 10px; font-size: 13px; }
 QCheckBox::indicator { width: 18px; height: 18px; }
-QPushButton#primary { background: #1f6feb; color: white; border: none; border-radius: 8px;
+QPushButton#primary { background: %(accent_strong)s; color: white; border: none; border-radius: 8px;
   padding: 7px 18px; font-weight: 600; min-height: 22px; }
 QPushButton#primary:hover { background: #3a82f0; }
 QPushButton#flat { padding: 7px 14px; min-height: 22px; }
 """.replace("%(m)s", MUTED)
+for _k, _v in {"bg": C["bg"], "line": C["line_soft"], "dim": C["text_dim"], "raised": C["raised"],
+               "raised_hover": C["raised_hover"], "text": C["text"], "accent": C["accent"],
+               "surface": C["surface"], "line_soft": C["line_soft"],
+               "accent_strong": C["accent_strong"]}.items():
+    STYLE = STYLE.replace(f"%({_k})s", _v)
 
 # действие хоткея -> (название, пояснение)
 HOTKEYS = (
@@ -168,8 +176,9 @@ class SettingsDialog(QDialog):
         root.addWidget(bar)
 
     # ---------- каркас раздела ----------
-    def _page(self, icon: str, title: str, lead: str) -> QVBoxLayout:
-        self.nav.addItem(QListWidgetItem(f"{icon}  {title}"))
+    def _page(self, _emoji: str, title: str, lead: str) -> QVBoxLayout:
+        name = SETTINGS_ICONS.get(title, "settings")
+        self.nav.addItem(QListWidgetItem(icon(name, C["text_dim"], checked_color=C["text"]), title))
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -274,12 +283,12 @@ class SettingsDialog(QDialog):
         c = self._card(lay)
         self.cb_kinds: dict[str, QCheckBox] = {}
         for kind, text, desc in (
-            ("chest", "🧰 Сундуки", "Нажал F у сундука (подсказка «F ▶ … сундук») и в «Получено» пришла награда"),
-            ("valuable", "🔮 Окулусы и ценности", "Их название появилось в списке «Получено»"),
-            ("teleport", "📍 Телепорты", "Подошёл вплотную (активация)"),
-            ("statue", "🗿 Статуи Архонтов", "Подошёл вплотную"),
-            ("seelie", "🧚 Феи", "Постоял у старта. Ненадёжно — лучше вручную (Ctrl+Alt+M)"),
-            ("challenge", "⏱ Испытания", "Постоял у старта. Ненадёжно — лучше вручную"),
+            ("chest", "Сундуки", "Нажал F у сундука (подсказка «F ▶ … сундук») и в «Получено» пришла награда"),
+            ("valuable", "Окулусы и ценности", "Их название появилось в списке «Получено»"),
+            ("teleport", "Телепорты", "Подошёл вплотную (активация)"),
+            ("statue", "Статуи Архонтов", "Подошёл вплотную"),
+            ("seelie", "Феи", "Постоял у старта. Ненадёжно — лучше вручную (Ctrl+Alt+M)"),
+            ("challenge", "Испытания", "Постоял у старта. Ненадёжно — лучше вручную"),
         ):
             on = rules.get(kind, {}).get("on", DEFAULT_RULES[kind]["on"])
             self.cb_kinds[kind] = self._check(c, text, desc, on)
@@ -407,7 +416,7 @@ class SettingsDialog(QDialog):
     def _build_advanced(self, s: dict) -> None:
         lay = self._page("🛠", "Дополнительно", "Обычно менять не нужно.")
         c = self._card(lay)
-        btn = QPushButton("🎯 Калибровка экрана…")
+        btn = QPushButton(icon("scan"), "Калибровка экрана…")
         btn.setObjectName("flat")
         btn.clicked.connect(self._open_calibration)
         self._row(c, "Где на экране мини-карта и «Получено»", btn,

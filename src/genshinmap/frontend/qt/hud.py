@@ -288,7 +288,7 @@ class NavHud(QWidget):
                 top = self._draw_compass(p, w, rel, color)
                 status = f"{self._turn_hint(rel)} · {d:.0f} ед."
         if not tp and not via:
-            status += {1: " · 🕳 в пещере", 2: " · 🌊 под водой", 3: " · ⬇ нижний уровень"}.get(
+            status += {1: " · в пещере", 2: " · под водой", 3: " · нижний уровень"}.get(
                 self.target.get("layer") or 0, "")
         step = self.target.get("step")
         if step:

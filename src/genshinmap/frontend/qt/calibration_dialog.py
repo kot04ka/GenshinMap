@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
 )
 
 from genshinmap.backend.vision.position_tracker import DEFAULT_SCALE, inner_square
+from genshinmap.frontend.qt.icons import icon
 
 COLORS = {"minimap": QColor("#ffd24a"), "pickup": QColor("#4ad8ff"),
           "prompt": QColor("#ff6ad5")}
@@ -148,9 +149,9 @@ class CalibrationDialog(QDialog):
 
         root = QVBoxLayout(self)
         top = QHBoxLayout()
-        self.btn_grab = QPushButton("📸 Снимок экрана через 3 с")
+        self.btn_grab = QPushButton(icon("camera"), "Снимок экрана через 3 с")
         self.btn_grab.clicked.connect(self._grab_delayed)
-        self.btn_open = QPushButton("📂 Открыть скриншот…")
+        self.btn_open = QPushButton(icon("folder"), "Открыть скриншот…")
         self.btn_open.clicked.connect(self._open_file)
         self.rb_mini = QRadioButton("Обвести мини-карту"); self.rb_mini.setChecked(True)
         self.rb_pick = QRadioButton("Обвести область плашки подбора")
@@ -177,7 +178,7 @@ class CalibrationDialog(QDialog):
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview.setStyleSheet("background:#0a0e16;border:1px solid #26314a;border-radius:6px;")
         side.addWidget(self.preview)
-        self.btn_test = QPushButton("🧭 Проверить позицию")
+        self.btn_test = QPushButton(icon("locate"), "Проверить позицию")
         self.btn_test.clicked.connect(self._test_position)
         side.addWidget(self.btn_test)
         self.result = QLabel("")

@@ -665,5 +665,7 @@
 "Маленькое окно карты поверх игры (Ctrl+Alt+O). Тащится за верхнюю полосу, размер — за уголок.": "Small map window over the game (Ctrl+Alt+O). Drag it by the top bar, resize by the corner.",
 "Тяни, чтобы передвинуть": "Drag to move",
 "— поменяй в Настройках": "— change them in Settings",
-"Ctrl+Alt+O — мини-окно поверх игры · Ctrl+Alt+X — перестать вести · всё остальное — в Настройках": "Ctrl+Alt+O — mini window on top of the game · Ctrl+Alt+X — stop guiding · everything else — in Settings"
+"Ctrl+Alt+O — мини-окно поверх игры · Ctrl+Alt+X — перестать вести · всё остальное — в Настройках": "Ctrl+Alt+O — mini window on top of the game · Ctrl+Alt+X — stop guiding · everything else — in Settings",
+"Genshin Map · тяни, чтобы передвинуть": "Genshin Map · drag to move",
+"Вернуть обычный вид": "Back to normal view"
 }

@@ -18,17 +18,20 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from genshinmap.frontend.qt.icons import icon
+from genshinmap.frontend.theme import C
+
 STYLE = """
-QDialog { background: #0f1522; }
+QDialog { background: #0B1120; }
 QLabel#title { font-size: 17px; font-weight: 700; color: #f1f5fc; }
-QLabel#lead { color: #8b9ab8; font-size: 12px; }
-QFrame#step { background: #121a2a; border: 1px solid #22304a; border-radius: 10px; }
+QLabel#lead { color: #A9B6CD; font-size: 12.5px; }
+QFrame#step { background: #111A2B; border: 1px solid #1B2740; border-radius: 10px; }
 QFrame#step[done="true"] { border-color: #2f7d45; }
 QFrame#step QLabel { background: transparent; border: none; }
 QLabel#mark { font-size: 16px; min-width: 22px; }
 QLabel#stepText { font-size: 13px; color: #e6ecf6; }
-QLabel#stepHint { font-size: 11.5px; color: #8b9ab8; }
-QPushButton#primary { background: #1f6feb; color: white; border: none; border-radius: 8px;
+QLabel#stepHint { font-size: 12px; color: #8595B0; }
+QPushButton#primary { background: #2F6FE0; color: white; border: none; border-radius: 8px;
   padding: 7px 18px; font-weight: 600; }
 QPushButton#primary:hover { background: #3a82f0; }
 QPushButton#pick { padding: 6px 12px; }
@@ -54,7 +57,8 @@ class _Step(QFrame):
         self.setObjectName("step")
         lay = QHBoxLayout(self)
         lay.setContentsMargins(12, 8, 12, 8)
-        self.mark = QLabel("○")
+        self.mark = QLabel()
+        self.mark.setPixmap(icon("circle", C["text_mut"]).pixmap(20, 20))
         self.mark.setObjectName("mark")
         lay.addWidget(self.mark, 0, Qt.AlignmentFlag.AlignTop)
         col = QVBoxLayout()
@@ -77,7 +81,8 @@ class _Step(QFrame):
             lay.addLayout(self.extra)
 
     def set_done(self, done: bool) -> None:
-        self.mark.setText("✅" if done else "○")
+        self.mark.setPixmap(icon("circle-check", C["good"]).pixmap(20, 20) if done
+                            else icon("circle", C["text_mut"]).pixmap(20, 20))
         self.setProperty("done", "true" if done else "false")
         self.style().unpolish(self)
         self.style().polish(self)
@@ -107,7 +112,7 @@ class WelcomeDialog(QDialog):
         self.s_game = _Step("Запусти Genshin в оконном или безрамочном режиме")
         self.s_mini = _Step("Выйди в открытый мир — ищу мини-карту игры")
         self.s_pos = _Step("Позиция на карте найдена")
-        self.calib_btn = QPushButton("🎯 Калибровка")
+        self.calib_btn = QPushButton(icon("scan"), "Калибровка")
         self.calib_btn.setObjectName("pick")
         self.calib_btn.clicked.connect(self.w._open_calibration)
         self.calib_btn.hide()
@@ -117,9 +122,9 @@ class WelcomeDialog(QDialog):
 
         pick = _Step("Что собираем?", "Остальные слои скроются — вернуть можно в панели слева",
                      buttons_below=True)
-        for text, kinds in (("🧰 Сундуки", "['chest']"), ("🔮 Окулусы", "['valuable']"),
-                            ("🧭 Всё", "['chest','valuable','seelie','challenge','teleport','statue']")):
-            b = QPushButton(text)
+        for ic, text, kinds in (("chest", "Сундуки", "['chest']"), ("sparkles", "Окулусы", "['valuable']"),
+                                ("list-check", "Всё", "['chest','valuable','seelie','challenge','teleport','statue']")):
+            b = QPushButton(icon(ic), text)
             b.setObjectName("pick")
             b.clicked.connect(lambda _=False, k=kinds, s=pick: (
                 self.w._js(f"window.showKinds({k});"), s.set_done(True)))
