@@ -21,6 +21,7 @@ class MapBridge(QObject):
     customDelete = pyqtSignal(str)
     routeClipRequested = pyqtSignal(str)       # анимация «как пройти» к точке
     routeClipReady = pyqtSignal(str, str)      # point_id, url ("" — не вышло)
+    questDone = pyqtSignal(str, bool)          # название задания, сделано ли
 
     @pyqtSlot()
     def on_ready(self) -> None:
@@ -52,6 +53,10 @@ class MapBridge(QObject):
     @pyqtSlot(str)
     def on_custom_delete(self, point_id: str) -> None:
         self.customDelete.emit(point_id)
+
+    @pyqtSlot(str, bool)
+    def on_quest_done(self, name: str, done: bool) -> None:
+        self.questDone.emit(name, done)
 
     @pyqtSlot(str)
     def request_route_clip(self, point_id: str) -> None:

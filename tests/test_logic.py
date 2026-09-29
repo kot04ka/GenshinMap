@@ -187,3 +187,17 @@ def test_slow_search_runs_in_background():
     ps._slow_step(tr, sq, 1080, bgr)
     _t.sleep(0.4)
     assert ps._slow_step(FakeTracker(), sq, 1080, bgr) is None
+
+
+# ---------- задания у сундуков ----------
+def test_quest_mention_and_find():
+    from genshinmap.quests import QuestIndex, quest_mention
+
+    m = quest_mention(["Сундук появится после прохождения квеста «Мечта Сохейля»."])
+    assert m and m["names"] == ["Мечта Сохейля"]
+    assert quest_mention(["Убивайте врагов — квеста не требуется"]) is None
+    assert quest_mention(["Под водой у телепорта"]) is None
+    qi = QuestIndex(".")
+    qi.items = [{"pid": "5", "x": 0, "y": 0, "names": ["Мечта Сохейля"]}]
+    assert qi.find("мечта сохейля")["pid"] == "5"
+    assert qi.find("Совсем другое задание") is None

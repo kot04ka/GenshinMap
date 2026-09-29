@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import contextlib
 import ctypes
+import itertools
 import math
 import threading
 import urllib.request
@@ -42,6 +43,14 @@ NEAR_UNITS = 45        # «подходишь» — показать карто�
 HERE_UNITS = 12        # «на месте» — двойной сигнал
 CARD_W = 300
 COMPASS_W = 420
+# путь «под ногами»: перспектива плоской земли (доли высоты экрана, метры ≈ единицы карты)
+GROUND_FEET_Y = 0.72      # ноги персонажа на экране
+GROUND_HORIZON_Y = 0.42   # линия горизонта при обычной камере
+GROUND_Z0 = 4.0           # расстояние камеры до ног по земле
+GROUND_CAM_H = 2.4        # высота камеры
+GROUND_STEP = 3.5         # шаг стрелок вдоль пути
+GROUND_FIRST = 1.0        # первая стрелка — почти у ног
+GROUND_AHEAD = 30.0       # на сколько вперёд рисовать
 TP_COLOR = "#b58cff"
 TOAST_MS = 4500
 WDA_EXCLUDEFROMCAPTURE = 0x11
@@ -79,7 +88,7 @@ class NavHud(QWidget):
         self.capture_safe = False            # окно скрыто от захвата экрана
         self.heading: float | None = None    # куда бежит игрок, градусы (0 — север)
         # что показывать (⚙ Настройки → «Поверх игры»)
-        self.show_path = self.show_compass = self.show_card = True
+        self.show_path = self.show_compass = self.show_card = self.show_ground = True
         self.show_toasts = self.sounds = True
         self.minimap_frac: dict = {}
         self.tip_text = ""
@@ -256,8 +265,12 @@ class NavHud(QWidget):
         here = d <= HERE_UNITS
         color = QColor(TP_COLOR) if tp else QColor("#3fb950") if here else QColor(GOLD)
 
-        if self.show_path and not tp and self.capture_safe and self.scale:
+        # путь (мини-карта, под ногами, компас) — только когда включён кнопкой «👣»
+        path_on = bool(self.target.get("show_path"))
+        if path_on and self.show_path and not tp and self.capture_safe and self.scale:
             self._draw_minimap_path(p, cx, cy, r, ui_k / self.scale, color)
+        if path_on and self.show_ground and not tp and not here and self.heading is not None:
+            self._draw_ground_path(p, w, h, color)
 
         # стрелка у края мини-карты
         if not tp:
@@ -280,7 +293,7 @@ class NavHud(QWidget):
             status = f"🌀 ТП{place} → 🧰"
         elif via:
             status = f"🕳 к входу в пещеру · {d:.0f} ед."
-            if self.show_compass and self.heading is not None:
+            if path_on and self.show_compass and self.heading is not None:
                 bearing = math.degrees(math.atan2(aim[0] - self.player[0], -(aim[1] - self.player[1])))
                 top = self._draw_compass(p, w, (bearing - self.heading + 540) % 360 - 180, color)
                 status = f"{self._turn_hint((bearing - self.heading + 540) % 360 - 180)} · " + status
@@ -288,7 +301,7 @@ class NavHud(QWidget):
             status = "🧰 на месте"
         else:
             status = f"🧰 {d:.0f} ед."
-            if self.show_compass and self.heading is not None:
+            if path_on and self.show_compass and self.heading is not None:
                 bearing = math.degrees(math.atan2(aim[0] - self.player[0], -(aim[1] - self.player[1])))
                 rel = (bearing - self.heading + 540) % 360 - 180
                 top = self._draw_compass(p, w, rel, color)
@@ -374,6 +387,78 @@ class NavHud(QWidget):
         p.drawRoundedRect(rect, 9, 9)
         p.setPen(QColor("#e6ecf6"))
         p.drawText(rect.adjusted(12, 0, -8, 0), Qt.AlignmentFlag.AlignVCenter, text)
+
+    def _ground_points(self) -> list[tuple[float, float]]:
+        """Точки пути впереди (мир): по пути A*, иначе прямо (через вход в пещеру)."""
+        px, py = self.player
+        if self.path:
+            from ..navigation import nearest_index
+
+            pts = [(px, py)] + self.path[nearest_index(self.path, px, py) + 1:]
+        else:
+            via = self.target.get("via")
+            pts = [(px, py)] + ([(via["x"], via["y"])] if via else []) + [(self.target["x"], self.target["y"])]
+        out, left, carry = [], GROUND_AHEAD, GROUND_FIRST
+        for (ax, ay), (bx, by) in itertools.pairwise(pts):
+            seg = math.hypot(bx - ax, by - ay)
+            if seg < 1e-6:
+                continue
+            t = carry
+            while t <= seg and left > 0:
+                out.append((ax + (bx - ax) * t / seg, ay + (by - ay) * t / seg))
+                t += GROUND_STEP
+                left -= GROUND_STEP
+            carry = t - seg
+            if left <= 0:
+                break
+        return out
+
+    def _draw_ground_path(self, p: QPainter, w: int, h: int, color: QColor) -> None:
+        """Стрелки «на земле» перед персонажем. Камера — за спиной, по направлению
+        бега (heading); земля — плоскость. Это приближение: высоты и наклона камеры
+        мы не знаем, поэтому точно по траве путь не ляжет, но куда идти — видно."""
+        hd = math.radians(self.heading)
+        fx, fy = math.sin(hd), -math.cos(hd)                # вперёд (0° — север, вверх)
+        rx, ry = math.cos(hd), math.sin(hd)                 # вправо
+        feet_y, horizon = h * GROUND_FEET_Y, h * GROUND_HORIZON_Y
+        k = (feet_y - horizon) * GROUND_Z0                  # y = horizon + k / (z + z0)
+        focal = k / GROUND_CAM_H
+        px, py = self.player
+        screen = []
+        for x, y in self._ground_points():
+            dx, dy = x - px, y - py
+            fwd, side = dx * fx + dy * fy, dx * rx + dy * ry
+            if fwd < 0.8:
+                continue                                    # за спиной / под ногами — не рисуем
+            z = fwd + GROUND_Z0
+            screen.append((w / 2 + side * focal / z, horizon + k / z, focal / z))
+        p.save()
+        for i, (sx, sy, scale) in enumerate(screen):
+            nx, ny = screen[i + 1][:2] if i + 1 < len(screen) else (sx, sy - 1)
+            ang = math.atan2(ny - sy, nx - sx)
+            size = max(8.0, min(64.0, scale * 0.9))
+            alpha = int(210 * (1 - i / max(1, len(screen))) + 40)
+            ux, uy = math.cos(ang), math.sin(ang)           # вдоль пути (на экране)
+            vx, vy = -uy, ux
+            tip = QPointF(sx + ux * size * 0.6, sy + uy * size * 0.6)
+            chev = QPainterPath(QPointF(sx - ux * size * 0.4 + vx * size * 0.7,
+                                        sy - uy * size * 0.4 + vy * size * 0.7))
+            chev.lineTo(tip)
+            chev.lineTo(QPointF(sx - ux * size * 0.4 - vx * size * 0.7,
+                                sy - uy * size * 0.4 - vy * size * 0.7))
+            outline = QPen(QColor(0, 0, 0, alpha // 2), max(3.0, size * 0.32))
+            outline.setCapStyle(Qt.PenCapStyle.RoundCap)
+            outline.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            p.setPen(outline)
+            p.drawPath(chev)
+            c = QColor(color)
+            c.setAlpha(alpha)
+            pen = QPen(c, max(2.0, size * 0.2))
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            p.setPen(pen)
+            p.drawPath(chev)
+        p.restore()
 
     def _draw_minimap_path(self, p: QPainter, cx: float, cy: float, r: float,
                            k: float, color: QColor) -> None:

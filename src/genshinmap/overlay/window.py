@@ -355,8 +355,13 @@ class OverlayWindow(QMainWindow):
         self._current_region = None
         # карточки точек (фото/«как найти» с HoYoLAB), кеш — data/point_info/
         self.point_info = PointInfoService(PROJECT_ROOT / "data" / "point_info", DATA_MAPS)
-        self.point_info.loaded.connect(
-            lambda pid, card: self._js(f"window.showPointInfo({json.dumps(pid)}, {card});"))
+        self.point_info.loaded.connect(self._on_point_info)
+        # сундуки, связанные с заданием (по тексту описаний), и где задания начинаются
+        from ..quests import QuestIndex
+
+        self.quests = QuestIndex(DATA_MAPS)
+        self._quest_flags: dict[str, str] = {}    # point_id -> название задания ("" — без названия)
+        self._quest_checked: set[str] = set()     # у каких сундуков уже смотрели описание
         self.ui_state = UIStateStore()
         self._prompts: dict = {}
         self._prompts_t = 0.0
@@ -444,6 +449,7 @@ class OverlayWindow(QMainWindow):
         self.bridge.targetChanged.connect(self._on_target_changed)
         self.bridge.navPathReady.connect(self._on_nav_path)
         self.bridge.routeClipRequested.connect(self._on_route_clip_requested)
+        self.bridge.questDone.connect(self._on_quest_done)
         self.bridge.routeClipReady.connect(
             lambda pid, url: self._js(f"window.showRouteClip({json.dumps(pid)}, {json.dumps(url)});"))
         self.point_info.loaded.connect(self._on_card_for_hud)
@@ -488,6 +494,7 @@ class OverlayWindow(QMainWindow):
         self.hotkeys.undo.connect(self._undo_auto_mark)
         self.hotkeys.stopNav.connect(self._stop_nav)
         self.hotkeys.toggleHud.connect(self._toggle_hud)
+        self.hotkeys.togglePath.connect(lambda: self._js("window.togglePath && window.togglePath();"))
         self.hotkeys.start()
         if self.hotkeys.failed:
             self._log("Хоткеи заняты другой программой: " + ", ".join(self.hotkeys.failed)
@@ -586,6 +593,7 @@ class OverlayWindow(QMainWindow):
             [(x, y) for lid in tp_labels for _, x, y in self.map_index.by_label.get(lid, [])])
         self.point_info.map_id = mid
         self.point_info.lang = i18n.lang()
+        self._load_quests(mid, labels)
         points = json.loads((_map_dir(mid) / "points.json").read_text(encoding="utf-8"))
         self.gems = PrimogemCounter(labels, points, self.settings.get("primogems"))
         self._regions = build_regions(mid, points)
@@ -1206,7 +1214,8 @@ class OverlayWindow(QMainWindow):
     def _replan(self, force: bool = False) -> None:
         """Проложить путь от игрока к цели (в фоне, не чаще раза в 2 с)."""
         target, pos = self.hud.target, self.position_service.latest(POSITION_MAX_AGE)
-        if not target or pos is None or self.nav_grid is None or target.get("tp"):
+        if not target or pos is None or self.nav_grid is None or target.get("tp") \
+                or not target.get("show_path"):
             return                      # далеко и выгоднее телепорт — путь пешком не строим
         now = time.monotonic()
         if not force and now - getattr(self, "_nav_t", 0.0) < 2.0:
@@ -1296,7 +1305,8 @@ class OverlayWindow(QMainWindow):
         old = self.hud.target or {}
         if (target or {}).get("pid") != old.get("pid") or \
                 bool((target or {}).get("tp")) != bool(old.get("tp")) or \
-                bool((target or {}).get("via")) != bool(old.get("via")):
+                bool((target or {}).get("via")) != bool(old.get("via")) or \
+                bool((target or {}).get("show_path")) != bool(old.get("show_path")):
             self._nav_path = []                         # новая цель или телепорт/пешком
             self.hud.set_path([])
         self.hud.set_target(target)
@@ -1316,6 +1326,7 @@ class OverlayWindow(QMainWindow):
         g = self.settings.get
         h = self.hud
         h.show_path, h.show_compass = g("hud_path", True), g("hud_compass", True)
+        h.show_ground = g("hud_ground", True)
         h.show_card, h.show_toasts, h.sounds = g("hud_card", True), g("hud_toasts", True), g("hud_sounds", True)
         h.update()
         opts = {"autoNext": bool(g("auto_next", True)), "useTp": bool(g("route_teleports", True))}
@@ -1672,12 +1683,15 @@ class OverlayWindow(QMainWindow):
         if self._prompts_on() and time.monotonic() - self._prompts_t <= PROMPT_MAX_AGE:
             prompts = self._prompts
         icons = self._icons if time.monotonic() - self._icons_t <= PROMPT_MAX_AGE else None
+        self._quest_scan(pos)
         for act in self.auto_marker.update(pos.x, pos.y, self.store.collected,
                                            prompts=prompts, probable=self.store.probable,
                                            icons=icons, valuables_by_pickup=self._ocr_ok,
                                            absence=getattr(self, "_prompt_seen", False)):
             c = act.cand
             what = self.auto_marker.describe(c.label_id)
+            if act.action == "probable" and self._quest_open(c.point_id):
+                continue                  # сундук появляется по заданию — «нет на месте» ничего не значит
             if act.action == "collected":
                 self._do_mark(c, pos, act.reason)
             elif act.action == "probable" and self.settings.get("absence_mark", True) \
@@ -1934,6 +1948,7 @@ class OverlayWindow(QMainWindow):
         # применяем лимит маркеров из настроек
         self._js(f"window.setMaxMarkers({int(self.settings.get('max_markers', 1200))});")
         self._apply_hud_options()
+        self._send_quest_flags()
         if not getattr(self, "_welcome_done", False) and not os.environ.get("GENSHINMAP_NO_WELCOME"):
             self._welcome_done = True
             QTimer.singleShot(800, self._show_welcome)
@@ -1959,6 +1974,108 @@ class OverlayWindow(QMainWindow):
         elif last != __version__ and __version__ in WHATS_NEW:
             self._whatsnew = WhatsNewDialog(self, __version__)
             self._whatsnew.show()
+
+    # ---- Задания у сундуков ----
+    def _quest_flags_file(self, mid: int) -> Path:
+        return PROJECT_ROOT / "data" / "point_info" / str(mid) / "quest_flags.json"
+
+    def _load_quests(self, mid: int, labels: list[dict]) -> None:
+        try:
+            self._quest_flags = json.loads(self._quest_flags_file(mid).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            self._quest_flags = {}
+        self._quest_checked = set(self._quest_flags)
+        if not self.quests.load(mid):
+            # точки начала заданий: разово скачать описания меток «Задания мира»
+            from ..pointinfo import BASE, HEADERS, _get_json
+
+            def fetch(pid) -> str:
+                info = _get_json(f"{BASE}/point/info?point_id={pid}&map_id={mid}"
+                                 f"&app_sn=ys_obc&lang=ru-ru", HEADERS)["data"]["info"]
+                return info.get("content") or ""
+
+            points = json.loads((_map_dir(mid) / "points.json").read_text(encoding="utf-8"))
+            self.quests.build_async(mid, points, labels, fetch)
+
+    def _quests_done(self) -> set[str]:
+        from ..quests import norm_name
+
+        return {norm_name(n) for n in self.ui_state.data.get("quests_done", [])}
+
+    def _quest_open(self, pid: str) -> bool:
+        """Сундук связан с заданием, которое игрок ещё не отметил сделанным."""
+        from ..quests import norm_name
+
+        if pid not in self._quest_flags:
+            return False
+        name = self._quest_flags[pid]
+        return not name or norm_name(name) not in self._quests_done()
+
+    def _on_point_info(self, pid: str, card_json: str) -> None:
+        """Карточка точки пришла: ищем в тексте задание, дополняем карточку."""
+        from ..quests import norm_name, quest_mention
+
+        try:
+            card = json.loads(card_json)
+        except (json.JSONDecodeError, TypeError):
+            card = {}
+        self._quest_checked.add(pid)
+        entry = self.map_index.by_id.get(pid) if self.map_index else None
+        chest = entry is not None and self.auto_marker.kind(entry[0]) == "chest"
+        m = quest_mention([card.get("content", ""), card.get("summary", ""),
+                           *[t.get("text", "") for t in card.get("tips", [])]]) if chest else None
+        if m:
+            name = m["names"][0] if m["names"] else ""
+            start = next((self.quests.find(n) for n in m["names"] if self.quests.find(n)), None)
+            done = bool(name) and norm_name(name) in self._quests_done()
+            card["quest"] = {"name": name, "quote": m["quote"][:220], "done": done,
+                             "start": {"pid": start["pid"]} if start else None}
+            if self._quest_flags.get(pid) != name:
+                self._quest_flags[pid] = name
+                self._save_quest_flags()
+            self._js(f"window.setQuestFlags([{json.dumps(pid)}], {str(not done).lower()});")
+        self._js(f"window.showPointInfo({json.dumps(pid)}, {json.dumps(card, ensure_ascii=False)});")
+
+    def _save_quest_flags(self) -> None:
+        f = self._quest_flags_file(self.current_map_id)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(self._quest_flags, ensure_ascii=False), encoding="utf-8")
+
+    def _on_quest_done(self, name: str, done: bool) -> None:
+        from ..quests import norm_name
+
+        names = [n for n in self.ui_state.data.get("quests_done", []) if norm_name(n) != norm_name(name)]
+        if done:
+            names.append(name)
+        self.ui_state.data["quests_done"] = names
+        self.ui_state.save()
+        ids = [pid for pid, n in self._quest_flags.items() if n and norm_name(n) == norm_name(name)]
+        self._js(f"window.setQuestFlags({json.dumps(ids)}, {str(not done).lower()});")
+        for pid in ids:                                  # карточки — с новым состоянием
+            self.point_info.request(pid)
+        self._log(("✓ задание сделано: «" if done else "↶ задание не сделано: «") + name + "»")
+
+    def _send_quest_flags(self) -> None:
+        ids = [pid for pid in self._quest_flags if self._quest_open(pid)]
+        if ids:
+            self._js(f"window.setQuestFlags({json.dumps(ids)}, true);")
+
+    QUEST_SCAN_S = 4.0            # не чаще одной точки за столько секунд — бережём HoYoLAB
+    QUEST_SCAN_RADIUS = 350
+
+    def _quest_scan(self, pos) -> None:
+        """В фоне понемногу смотрим описания несобранных сундуков рядом с игроком."""
+        now = time.monotonic()
+        if now - getattr(self, "_quest_scan_t", 0.0) < self.QUEST_SCAN_S:
+            return
+        self._quest_scan_t = now
+        labels = self.auto_marker.labels_by_kind.get("chest", ())
+        for c in self.map_index.candidates(labels, pos.x, pos.y, self.store.collected,
+                                           self.QUEST_SCAN_RADIUS):
+            if c.point_id not in self._quest_checked and not str(c.point_id).startswith("u"):
+                self._quest_checked.add(c.point_id)
+                self.point_info.request(c.point_id)
+                return
 
     def _on_marker_clicked(self, marker_id: str) -> None:
         collected = self.store.toggle(marker_id)

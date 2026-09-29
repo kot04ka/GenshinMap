@@ -172,6 +172,16 @@
     #nav button:hover { color: #ff9aa5; }
     #nav button { min-width: 28px; min-height: 28px; border-radius: 8px; }
     #nav #nav-skip { display: none; color: #cfd8ea; }
+    #nav #nav-path { color: #cfd8ea; opacity: .55; }
+    #nav #nav-path.on { opacity: 1; background: rgba(255,210,74,.18); color: #ffd24a; }
+    /* сундук связан с заданием */
+    .gm-ico[data-quest]::after { content: '🔒'; position: absolute; right: -5px; top: -5px; font-size: 10px;
+      width: 14px; height: 14px; line-height: 14px; text-align: center; border-radius: 50%;
+      background: rgba(10,14,22,.9); box-shadow: 0 0 0 1px rgba(255,210,74,.6); }
+    .card-quest { margin: 4px 0 6px; padding: 7px 9px; border-radius: 8px; font-size: 12.5px;
+      background: rgba(181,140,255,.12); border: 1px solid rgba(181,140,255,.45); color: #e8dcff; }
+    .card-quest .q { margin-top: 3px; color: #b9a8dc; font-size: 11.5px; font-style: italic; }
+    .card-quest.done { opacity: .6; }
     #nav.route #nav-skip { display: inline-block; }
     #nav #nav-skip:hover { color: var(--accent); background: rgba(88,166,255,.12); }
     #nav.tp { border-color: #b58cff; }
@@ -434,6 +444,7 @@
   <div id="maptip"></div>
   <div id="lost" title="Позиция вернётся сама, когда мини-карта снова совпадёт с картой">📍 Позиция не найдена: подземелье или многоуровневая зона (такого уровня нет на карте HoYoLAB), меню или загрузка. Точка — последнее известное место.</div>
   <div id="nav"><span class="arrow">➤</span><span id="nav-txt"></span>
+    <button id="nav-path" title="Показать путь: на карте, мини-карте и под ногами (Ctrl+Alt+P)">👣</button>
     <button id="nav-skip" title="Пропустить эту точку маршрута">⏭</button>
     <button id="nav-x" title="Перестать вести (Ctrl+Alt+X)">✕</button></div>
   <div id="loading"><div class="spinner"></div><div>Загрузка карты…</div></div>
@@ -512,6 +523,8 @@
       // подписи регионов — отдельная панель ПОВЕРХ иконок (иначе их не прочесть)
       map.createPane('regionPane').style.zIndex = 650;
       map.createPane('anchorPane').style.zIndex = 450;   // названия мест — под иконками
+      map.createPane('pathPane').style.zIndex = 445;     // линии пути — по кнопке «👣»
+      map.getPane('pathPane').style.display = 'none';
       markerLayer.addTo(map);
       regionLayer.addTo(map);
       anchorLayer.addTo(map);
@@ -679,13 +692,29 @@
     const LAYER_TEXT = { 1: '🕳 В пещере / под землёй — ищи вход', 2: '🌊 Под водой',
                          3: '⬇ Нижний уровень' };
 
-    function makeIcon(labelId, collected, probable, layer) {
+    // сундуки, связанные с заданием (по тексту описаний) — присылает Python
+    const QUEST = new Set();
+    window.setQuestFlags = function (ids, on) {
+      for (const pid of ids) {
+        const k = String(pid);
+        if (on) QUEST.add(k); else QUEST.delete(k);
+        const e = markerByPoint[k] && markerByPoint[k].marker.getElement();
+        const ico = e && e.querySelector('.gm-ico');
+        if (ico) { if (on) ico.dataset.quest = '1'; else delete ico.dataset.quest; }
+      }
+    };
+    window.questGo = function (pid) { setTarget(String(pid)); };
+    window.questDone = function (name, done) {
+      if (bridge && bridge.on_quest_done) bridge.on_quest_done(name, !!done);
+    };
+
+    function makeIcon(labelId, collected, probable, layer, quest) {
       const url = iconUrl(labelId);
       const onerr = "this.style.display='none';this.parentNode.classList.add('gm-fallback')";
       return L.divIcon({
         className: '',
         html: `<div class="gm-ico${collected ? ' collected' : ''}${probable ? ' probable' : ''}"` +
-              `${layer ? ` data-layer="${layer}"` : ''}>` +
+              `${layer ? ` data-layer="${layer}"` : ''}${quest ? ' data-quest="1"' : ''}>` +
               `<img src="${url}" onerror="${onerr}"></div>`,
         iconSize: [30, 30], iconAnchor: [15, 15],
       });
@@ -709,7 +738,7 @@
     function addMarker(pid, x, y, labelId, area) {
       const collected = COLLECTED.has(pid), probable = PROBABLE.has(pid);
       const layer = (pointInfo.get(pid) || [])[4] || 0;
-      const m = L.marker(toLatLng(x, y), { icon: makeIcon(labelId, collected, probable, layer) });
+      const m = L.marker(toLatLng(x, y), { icon: makeIcon(labelId, collected, probable, layer, QUEST.has(pid)) });
       m.bindTooltip(tipText(labelId, collected, area, probable, layer),
                     { className: 'gm-tip', direction: 'top', offset: [0, -10] });
       m.on('click', () => openCard(pid));
@@ -826,7 +855,6 @@
         cardPopup.setLatLng(toLatLng(info[0], info[1])).setContent(cardHtml(pid)).openOn(map);
       }
       if (!cardInfo[pid] && bridge && bridge.request_point_info) bridge.request_point_info(pid);
-      if (!COLLECTED.has(pid) && routeClips[pid] === undefined) loadRouteClip(pid);
     }
 
     function cardHtml(pid) {
@@ -853,6 +881,16 @@
       if (isCustom(pid)) h += `<button onclick="deleteCustom('${pid}')">🗑 Удалить точку</button>`;
       h += '</div>';
       h += routeClipHtml(pid);
+      if (d && d.quest) {
+        const q = d.quest;
+        h += `<div class="card-quest${q.done ? ' done' : ''}">🔒 ${q.name ? 'Нужно задание «' + esc(q.name) + '»' : 'Связан с заданием'}` +
+             (q.done ? ' · ✓ сделано' : '') +
+             `<div class="q">${esc(q.quote || '')}</div><div class="card-btns">` +
+             (q.start ? `<button onclick="questGo('${q.start.pid}')">⭐ Где начать задание</button>` : '') +
+             (q.name ? `<button onclick="questDone(${esc(JSON.stringify(q.name))}, ${!q.done})">` +
+                       `${q.done ? '↶ Не сделано' : '✓ Задание сделал'}</button>` : '') +
+             '</div></div>';
+      }
       if (d && d.custom) {
         return h + '<div class="card-muted">⭐ Своя точка: этого объекта нет на карте HoYoLAB.</div>';
       }
@@ -1125,7 +1163,7 @@
         left: st ? st[1] - st[0] + 1 : 0, step: st,
         layer: pointInfo.get(navPid)[4] || 0,
         tp: tpHint ? { x: tpHint.x, y: tpHint.y, name: tpHint.name } : null,
-        via: caveVia ? { x: caveVia.x, y: caveVia.y } : null }));
+        via: caveVia ? { x: caveVia.x, y: caveVia.y } : null, show_path: showPath }));
     }
 
     // ---------- Телепорты: куда можно прыгнуть ----------
@@ -1133,6 +1171,13 @@
     const TP_PENALTY = 110;      // «цена» телепорта в единицах пути (загрузка, выход)
     const WALK_K = 1.25;         // путь по местности длиннее прямой
     let NAV_OPTS = { autoNext: true, useTp: true };
+    let showPath = false;          // линии пути — только по кнопке «👣» (не навязчиво)
+    window.togglePath = function (on) {
+      showPath = typeof on === 'boolean' ? on : !showPath;
+      if (map) map.getPane('pathPane').style.display = showPath ? '' : 'none';
+      document.getElementById('nav-path').classList.toggle('on', showPath);
+      reportTarget();
+    };
     window.setNavOptions = function (o) { NAV_OPTS = Object.assign(NAV_OPTS, o || {}); tpCache = null; };
     let tpCache = null, tpCacheT = 0;
     function openTps() {
@@ -1260,13 +1305,19 @@
       // только включённые на карте виды сундуков (выключил «Деревянный с морой» — его нет)
       const shown = LABELS.some(l => l.kind === 'chest' && enabled.has(l.id));
       const ids = [];
-      for (const [pid, [, , labelId, a]] of pointInfo)
-        if (a === area && isChestLabel(labelId) && !COLLECTED.has(pid) && (!shown || enabled.has(labelId))) ids.push(pid);
+      let questSkipped = 0;
+      for (const [pid, [, , labelId, a]] of pointInfo) {
+        if (!(a === area && isChestLabel(labelId) && !COLLECTED.has(pid) && (!shown || enabled.has(labelId)))) continue;
+        if (QUEST.has(pid)) { questSkipped++; continue; }     // нужен квест — не бегаем зря
+        ids.push(pid);
+      }
       if (!ids.length) { alertNav('В этом регионе все сундуки собраны 🎉'); return; }
       tpCache = null;
       const tps = openTps();
       route = planRoute(lastPlayer.x, lastPlayer.y, ids, tps);
-      if (NAV_OPTS.useTp !== false && tps.length < 3)
+      if (questSkipped)
+        showMapTip(`🔒 Не в маршруте: ${questSkipped} сундуков, для которых нужно задание (значок 🔒).`, 7000);
+      else if (NAV_OPTS.useTp !== false && tps.length < 3)
         showMapTip('🌀 Отметь на карте открытые телепорты (клик по значку → «Собрано») — маршрут начнёт '
                    + 'предлагать прыжки и станет короче.', 9000);
       routeSkipped = new Set();
@@ -1306,10 +1357,10 @@
         }
         prev = [x, y];
       }
-      if (!routeLine) routeLine = L.polyline(walk, { color: '#8ea1c2', weight: 2, opacity: .75,
+      if (!routeLine) routeLine = L.polyline(walk, { pane: 'pathPane', color: '#8ea1c2', weight: 2, opacity: .75,
                                                      dashArray: '4 8', interactive: false }).addTo(map);
       else routeLine.setLatLngs(walk);
-      if (!routeTpLine) routeTpLine = L.polyline(jumps, { color: '#b58cff', weight: 2.5, opacity: .9,
+      if (!routeTpLine) routeTpLine = L.polyline(jumps, { pane: 'pathPane', color: '#b58cff', weight: 2.5, opacity: .9,
                                                          dashArray: '2 6', interactive: false }).addTo(map);
       else routeTpLine.setLatLngs(jumps);
       if (routeMarks) map.removeLayer(routeMarks);
@@ -1362,6 +1413,7 @@
     }
     document.getElementById('nav-x').onclick = clearTarget;
     document.getElementById('nav-skip').onclick = () => window.skipRoutePoint();
+    document.getElementById('nav-path').onclick = () => window.togglePath();
 
     function updateNav() {
       if (!navPid) return;
@@ -1390,7 +1442,7 @@
       if (hint) {
         if (navLine) { map.removeLayer(navLine); navLine = null; }
         const pts = [toLatLng(hint.x, hint.y), toLatLng(x, y)];
-        if (!tpLine) tpLine = L.polyline(pts, { color: '#b58cff', weight: 3, opacity: .95,
+        if (!tpLine) tpLine = L.polyline(pts, { pane: 'pathPane', color: '#b58cff', weight: 3, opacity: .95,
                                                 className: 'gm-nav-line', interactive: false }).addTo(map);
         else tpLine.setLatLngs(pts);
         nav.querySelector('.arrow').textContent = '🌀';
@@ -1420,7 +1472,7 @@
         const vpts = navPath && navPath.length > 1
           ? [toLatLng(lastPlayer.x, lastPlayer.y)].concat(navPath.slice(pathNearest(navPath, lastPlayer.x, lastPlayer.y) + 1).map(p => toLatLng(p[0], p[1])), [toLatLng(x, y)])
           : [toLatLng(lastPlayer.x, lastPlayer.y), toLatLng(via.x, via.y), toLatLng(x, y)];
-        if (!navLine) navLine = L.polyline(vpts, { color: '#58a6ff', weight: 3, opacity: .9,
+        if (!navLine) navLine = L.polyline(vpts, { pane: 'pathPane', color: '#58a6ff', weight: 3, opacity: .9,
                                                    className: 'gm-nav-line', interactive: false }).addTo(map);
         else navLine.setLatLngs(vpts);
         return;
@@ -1439,7 +1491,7 @@
       const pts = navPath && navPath.length > 1
         ? [toLatLng(lastPlayer.x, lastPlayer.y)].concat(navPath.slice(pathNearest(navPath, lastPlayer.x, lastPlayer.y) + 1).map(p => toLatLng(p[0], p[1])))
         : [toLatLng(lastPlayer.x, lastPlayer.y), toLatLng(x, y)];
-      if (!navLine) navLine = L.polyline(pts, { color: '#58a6ff', weight: 3, opacity: .9,
+      if (!navLine) navLine = L.polyline(pts, { pane: 'pathPane', color: '#58a6ff', weight: 3, opacity: .9,
                                                 className: 'gm-nav-line', interactive: false }).addTo(map);
       else navLine.setLatLngs(pts);
     }

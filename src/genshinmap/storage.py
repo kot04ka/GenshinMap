@@ -27,6 +27,7 @@ DEFAULT_SETTINGS: dict = {
         "undo": "<ctrl>+<alt>+z",
         "stop_nav": "<ctrl>+<alt>+x",
         "toggle_hud": "<ctrl>+<alt>+g",
+        "toggle_path": "<ctrl>+<alt>+p",
     },
     "max_markers": 1200,
     "overlay_opacity": 0.9,
@@ -72,6 +73,7 @@ DEFAULT_SETTINGS: dict = {
     "hud_enabled": True,
     # что рисовать поверх игры (каждое можно выключить)
     "hud_path": True,          # путь на мини-карте
+    "hud_ground": True,        # путь под ногами (примерно)
     "hud_compass": True,       # компас вверху экрана
     "hud_card": True,          # карточка с подсказкой и фото у цели
     "hud_toasts": True,        # всплывашки «отмечено»

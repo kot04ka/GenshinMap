@@ -512,5 +512,20 @@
 "внутри": "inside",
 "ед. от входа": "u. from the entrance",
 "Пещера": "Cave",
-"Подводная пещера": "Underwater cave"
+"Подводная пещера": "Underwater cave",
+"Показать путь: на карте, мини-карте и под ногами (Ctrl+Alt+P)": "Show the path: on the map, minimap and under your feet (Ctrl+Alt+P)",
+"Показать / скрыть путь": "Show / hide the path",
+"Путь на карте, мини-карте и под ногами": "Path on the map, minimap and under your feet",
+"Путь под ногами (примерно)": "Path under your feet (approximate)",
+"Стрелки на земле перед персонажем, туда, куда бежать. Рисуются в перспективе от направления бега, поэтому на склонах неточные": "Arrows on the ground in front of the character, where to run. Drawn in perspective from the running direction, so they're inaccurate on slopes",
+"Нужно задание «": "Requires the quest “",
+"Связан с заданием": "Linked to a quest",
+"✓ сделано": "✓ done",
+"⭐ Где начать задание": "⭐ Where to start the quest",
+"✓ Задание сделал": "✓ I did the quest",
+"↶ Не сделано": "↶ Not done",
+"🔒 Не в маршруте:": "🔒 Not in the route:",
+"сундуков, для которых нужно задание (значок 🔒).": "chests that require a quest (🔒 icon).",
+"✓ задание сделано: «": "✓ quest done: “",
+"↶ задание не сделано: «": "↶ quest not done: “"
 }

@@ -62,6 +62,7 @@ HOTKEYS = (
     ("toggle_overlay", "Мини-окно поверх игры", "Маленькая карта в углу экрана и обратно"),
     ("toggle_visible", "Скрыть / показать окно карты", "Быстро убрать карту, не закрывая"),
     ("toggle_hud", "Подсказки поверх игры вкл/выкл", "Путь, компас, карточка у сундука"),
+    ("toggle_path", "Показать / скрыть путь", "Путь на карте, мини-карте и под ногами"),
     ("stop_nav", "Перестать вести", "Убрать цель и маршрут"),
     ("undo", "Отменить авто-отметку", "Если приложение отметило не то"),
     ("mark_nearest", "Отметить ближайшую точку", "Ручная отметка того, что рядом"),
@@ -239,6 +240,9 @@ class SettingsDialog(QDialog):
         self.cb_hud = {"hud_enabled": self.cb_hud_master}
         for key, text, desc in (
             ("hud_path", "Путь на мини-карте", "Линия от стрелки персонажа до цели, как путь задания"),
+            ("hud_ground", "Путь под ногами (примерно)",
+             ("Стрелки на земле перед персонажем, туда, куда бежать. Рисуются в перспективе "
+              "от направления бега, поэтому на склонах неточные")),
             ("hud_compass", "Компас вверху экрана", "Куда повернуть: «↑ прямо / ↖ левее / ↗ правее» и расстояние"),
             ("hud_card", "Карточка с подсказкой и фото", "Появляется справа, когда подходишь к цели"),
             ("hud_toasts", "Сообщения «отмечено»", "На 4 секунды после авто-отметки, с отменой Ctrl+Alt+Z"),
@@ -258,7 +262,7 @@ class SettingsDialog(QDialog):
         self._sync_hud(self.cb_hud_master.isChecked())
 
     def _sync_hud(self, on: bool) -> None:
-        for key in ("hud_path", "hud_compass", "hud_card", "hud_toasts", "hud_sounds"):
+        for key in ("hud_path", "hud_ground", "hud_compass", "hud_card", "hud_toasts", "hud_sounds"):
             self.cb_hud[key].setEnabled(on)
 
     def _build_automark(self, s: dict) -> None:
