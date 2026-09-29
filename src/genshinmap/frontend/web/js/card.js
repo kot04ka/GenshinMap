@@ -9,6 +9,7 @@ function openCard(pid) {
   pid = String(pid);
   const info = pointInfo.get(pid);
   if (!info) return;
+  syncLevelFor(pid);             // сундук на поверхности — выйти из пещеры, на другом этаже — туда
   if (isCustom(pid)) cardInfo[pid] = { custom: true };     // подсказок HoYoLAB у своих нет
   cardPid = pid;
   clearOpen = false;
@@ -345,5 +346,8 @@ document.addEventListener('keydown', e => {
   const lbOn = document.getElementById('lightbox').classList.contains('on');
   if (lbOn && e.key === 'ArrowLeft') { galleryStep(-1); e.preventDefault(); }
   else if (lbOn && e.key === 'ArrowRight') { galleryStep(1); e.preventDefault(); }
-  else if (e.key === 'Escape') { if (lbOn) closeGallery(); else closeCard(); }
+  else if (e.key === 'Escape') {
+    const cardOn = (cardPopup && map.hasLayer(cardPopup)) || document.getElementById('sheet').classList.contains('on');
+    if (lbOn) closeGallery(); else if (cardOn) closeCard(); else if (caveMode) setCaveMode(false);
+  }
 });

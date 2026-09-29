@@ -19,14 +19,15 @@ window.questDone = function (name, done) {
   if (bridge && bridge.on_quest_done) bridge.on_quest_done(name, !!done);
 };
 
-function makeIcon(labelId, collected, probable, layer, quest, surface) {
+function makeIcon(labelId, collected, probable, layer, quest, level) {
   const url = iconUrl(labelId);
   const onerr = "this.style.display='none';this.parentNode.classList.add('gm-fallback')";
   return L.divIcon({
     className: '',
     html: `<div class="gm-ico${collected ? ' collected' : ''}${probable ? ' probable' : ''}"` +
-          `${layer ? ` data-layer="${layer}"` : ''}${quest ? ' data-quest="1"' : ''}${surface ? ' data-surface="1"' : ''}>` +
-          `<img src="${url}" onerror="${onerr}"></div>`,
+          `${layer ? ` data-layer="${layer}"` : ''}${quest ? ' data-quest="1"' : ''}${level === 'surface' ? ' data-surface="1"' : level ? ' data-other="1"' : ''}>` +
+          `<img src="${url}" onerror="${onerr}">` +
+          `${level && level !== 'surface' ? `<span class="gm-lvl">${level}</span>` : ''}</div>`,
     iconSize: [30, 30], iconAnchor: [15, 15],
   });
 }
@@ -49,9 +50,8 @@ function tipText(labelId, collected, area, probable) {
 function addMarker(pid, x, y, labelId, area) {
   const collected = COLLECTED.has(pid), probable = PROBABLE.has(pid);
   const layer = (pointInfo.get(pid) || [])[4] || 0;
-  // в режиме пещер точки поверхности приглушены — видно, что сейчас под землёй
-  const surface = caveMode && !(pointInfo.get(pid) || [])[5];
-  const m = L.marker(toLatLng(x, y), { icon: makeIcon(labelId, collected, probable, layer, QUEST.has(pid), surface) });
+  // в режиме пещер точки поверхности и других этажей приглушены (клик — перейти туда)
+  const m = L.marker(toLatLng(x, y), { icon: makeIcon(labelId, collected, probable, layer, QUEST.has(pid), levelOf(pid)) });
   m.bindTooltip(tipText(labelId, collected, area, probable, layer),
                 { className: 'gm-tip', direction: 'top', offset: [0, -10] });
   m.on('click', () => openCard(pid));
@@ -73,7 +73,7 @@ function renderVisible() {
     for (let i = 0; i < pts.length; i++) {
       const p = pts[i];
       const lat = -(oy + p[2]), lng = ox + p[1];
-      if (lat > N || lat < S || lng < Wb || lng > E || !inRegion(p) || !caveVisible(p)) continue;
+      if (lat > N || lat < S || lng < Wb || lng > E || !inRegion(p)) continue;
       const pid = String(p[0]);
       if (COLLECTED.has(pid)) { if (!hideCollected) done.push([pid, p, labelId, lat, lng]); }
       else fresh.push([pid, p, labelId, lat, lng]);

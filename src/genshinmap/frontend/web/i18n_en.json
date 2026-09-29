@@ -700,5 +700,13 @@
 "Видео": "Video",
 "Закрыть (Esc)": "Close (Esc)",
 "цель": "target",
-"Нужно задание": "Needs a quest"
+"Нужно задание": "Needs a quest",
+"Уровень": "Level",
+"Поверхность": "Surface",
+"входов в пещеру:": "cave entrances:",
+"вход в пещеру не найден": "no cave entrance found",
+"Уровень: поверхность или этаж пещеры": "Level: surface or cave floor",
+"Пещеры: поверхность затемнена": "Caves: the surface is dimmed",
+"На поверхность": "To the surface",
+"Вернуться на поверхность (Esc)": "Back to the surface (Esc)"
 }

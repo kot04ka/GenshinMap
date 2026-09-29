@@ -19,6 +19,19 @@ pytestmark = pytest.mark.skipif(not (ROOT / "data" / "maps" / "2" / "points.json
 OPEN_ALL = ("LABELS.slice(0, 40).forEach(l => setLabel(l.id, true, true)); refreshPanel(); "
             "selectRegion(REGIONS[0].id); renderVisible(); "
             "openCard([...pointInfo.keys()][100]); toggleClear();")
+# уровни: карточка точки с поверхности выводит из пещеры, с другого этажа — переключает на него,
+# Esc выходит на поверхность (ошибка -> console.error -> тест падает)
+LEVELS = ("const g = Object.keys(floorsByGroup).find(k => floorsByGroup[k].length > 1); "
+          "const [f1, f2] = floorsByGroup[g]; "
+          "const onF2 = [...pointInfo.keys()].find(k => pointInfo.get(k)[5] === f2.id); "
+          "const surf = [...pointInfo.keys()].find(k => !pointInfo.get(k)[5]); "
+          "pickFloor(Number(g), f1.id); "
+          "if (!caveMode) console.error('не вошли в пещеру'); "
+          "openCard(onF2); if (caveFloor[g] !== f2.id) console.error('этаж точки не выбран'); "
+          "closeCard(); openCard(surf); if (caveMode) console.error('не вышли на поверхность'); "
+          "closeCard(); pickFloor(Number(g), f1.id); "
+          "document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'})); "
+          "if (caveMode) console.error('Esc не вывел из пещеры');")
 # пещера: режим «Пещеры», карточка точки под землёй, галерея
 CAVE = ("const pid = [...pointInfo.keys()].find(k => pointInfo.get(k)[5] && floorOfPoint(k)); "
         "showCave(pid); setTimeout(() => { openCard(pid); showPointInfo(pid, {tips: [{text: 'Tip', "
@@ -38,7 +51,8 @@ def _snapshot(tmp_path: Path, *args: str) -> subprocess.CompletedProcess:
     ("--lang", "en", "--js", OPEN_ALL),
     ("--compact", "--size", "460x560", "--js", "openCard([...pointInfo.keys()][100]);"),
     ("--lang", "en", "--wait", "4", "--js", CAVE),
-], ids=["ru", "en", "compact", "cave-en"])
+    ("--js", LEVELS),
+], ids=["ru", "en", "compact", "cave-en", "levels"])
 def test_map_page(tmp_path, args):
     r = _snapshot(tmp_path, *args)
     assert r.returncode == 0, r.stdout + r.stderr

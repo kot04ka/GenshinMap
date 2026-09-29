@@ -556,3 +556,23 @@ body.has-caves .gm-ctl a.cave-btn { display: flex !important; }
 #floor-pick button:hover { border-color: var(--accent); background: var(--raised-hover); }
 #floor-pick button.on { color: #1A1300; background: var(--gold); border-color: #3A2A00; }
 body.compact #floor-pick { left: 8px; bottom: 62px; }
+
+/* уровни: чужой этаж / поверхность в режиме пещер — приглушены, у чужого этажа метка */
+body.cave-mode .gm-ico[data-other] { opacity: .45; }
+.gm-lvl { position: absolute; right: -8px; bottom: -6px; padding: 0 4px; border-radius: 6px;
+  font: 700 10px/14px 'Segoe UI', sans-serif; color: #1A1300; background: var(--gold);
+  box-shadow: 0 0 0 1px #3A2A00; pointer-events: none; }
+body.cave-mode .gm-ico[data-other] .gm-lvl { opacity: 1; }
+#floor-pick button.surf { display: inline-flex; align-items: center; gap: 4px; }
+#floor-pick button.surf.on { color: var(--good-text); background: var(--good-bg); border-color: var(--good); }
+#cave-bar { position: absolute; top: 58px; left: calc(var(--panel-w) + (100% - var(--panel-w)) / 2);
+  transform: translateX(-50%); z-index: 952; display: none; align-items: center; gap: 10px;
+  padding: 5px 6px 5px 14px; border-radius: 999px; background: rgba(17,26,43,.96);
+  border: 1px solid var(--gold); box-shadow: 0 6px 20px rgba(0,0,0,.5); font-size: 12.5px; white-space: nowrap; }
+#cave-bar.on { display: flex; }
+#cave-bar .cb-t { color: #FFE2A3; font-weight: 600; }
+#cave-bar button { min-height: 32px; padding: 0 12px; border-radius: 999px; font-weight: 700;
+  color: #1A1300; background: var(--gold); border: 1px solid #3A2A00; }
+#cave-bar button:hover { filter: brightness(1.08); }
+body.compact #cave-bar { top: 6px; left: 50%; font-size: 12px; }
+body.compact #cave-bar .cb-t { display: none; }

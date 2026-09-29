@@ -39,11 +39,22 @@ function floorOfPoint(pid) {
   return i && i[5] ? floorById[i[5]] || null : null;
 }
 
-// точка видна в текущем режиме? (в режиме пещер — только на выбранном этаже)
-function caveVisible(p) {
-  if (!caveMode || !p[5]) return true;
-  const f = floorById[p[5]];
-  return !f || caveFloor[f.group] === p[5];
+// Уровень точки относительно того, что сейчас на экране (для вида маркера):
+// '' — видна как есть; 'surface' — на поверхности (а мы в пещере);
+// имя этажа ('B2') — в этой пещере, но на другом этаже. Всё видно, лишнее приглушено.
+function levelOf(pid) {
+  if (!caveMode) return '';
+  const f = floorOfPoint(pid);
+  if (!f) return 'surface';
+  return caveFloor[f.group] === f.id ? '' : f.name;
+}
+
+// Открываем карточку точки — показываем её уровень: поверхность или нужный этаж пещеры
+function syncLevelFor(pid) {
+  if (!caveMode) return;
+  const f = floorOfPoint(pid);
+  if (!f) { setCaveMode(false); return; }
+  if (caveFloor[f.group] !== f.id) pickFloor(f.group, f.id);
 }
 
 function setCaveMode(on, silent) {
@@ -51,6 +62,9 @@ function setCaveMode(on, silent) {
   document.body.classList.toggle('cave-mode', caveMode);
   const b = document.getElementById('cave-toggle');
   if (b) { b.classList.toggle('on', caveMode); b.setAttribute('aria-pressed', String(caveMode)); }
+  document.getElementById('cave-bar').classList.toggle('on', caveMode);
+  cavePick = null;
+  if (!caveMode) window.clearCaveRoute();
   // маркеры пересоздаём: у точек поверхности в режиме пещер другой вид
   if (map) {
     markerLayer.clearLayers();
@@ -106,19 +120,26 @@ function caveAtCenter() {
   return best;
 }
 
+// Переключатель уровней (как этажи здания в картах): «Поверхность» + этажи пещеры.
+// Виден, когда в центре экрана пещера: в режиме пещер — всегда, на поверхности —
+// когда пещеру уже видно (приближено).
+const LEVELS_ZOOM = -3;
 function updateFloorPicker() {
   const box = document.getElementById('floor-pick');
-  if (!box) return;
-  const g = caveMode ? caveAtCenter() : null;
+  if (!box || !map) return;
+  const g = (caveMode || map.getZoom() >= LEVELS_ZOOM) ? caveAtCenter() : null;
   const fl = g ? floorsByGroup[g] : null;
   if (!fl) { box.classList.remove('on'); box.innerHTML = ''; cavePick = null; return; }
-  if (cavePick === g + ':' + caveFloor[g]) { box.classList.add('on'); return; }
-  cavePick = g + ':' + caveFloor[g];
+  const key = g + ':' + caveFloor[g] + ':' + caveMode;
+  if (cavePick === key) { box.classList.add('on'); return; }
+  cavePick = key;
   const n = (fl[0].entrances || []).length;
-  let h = `<div class="fp-h">${ICON('cave')}<span>Пещера</span>` +
-          `<span class="fp-sub">${n ? 'входов: ' + n : 'вход не найден'}</span></div><div class="fp-row">`;
+  let h = `<div class="fp-h">${ICON('cave')}<span>Уровень</span>` +
+          `<span class="fp-sub">${n ? 'входов в пещеру: ' + n : 'вход в пещеру не найден'}</span></div><div class="fp-row">` +
+          `<button class="surf${caveMode ? '' : ' on'}" aria-pressed="${!caveMode}" onclick="setCaveMode(false)">` +
+          `${ICON('home', 'inl')}Поверхность</button>`;
   for (const f of fl) {
-    const on = caveFloor[g] === f.id;
+    const on = caveMode && caveFloor[g] === f.id;
     h += `<button class="${on ? 'on' : ''}" aria-pressed="${on}" onclick="pickFloor(${g}, ${f.id})">${esc(f.name)}</button>`;
   }
   box.innerHTML = h + '</div>';
@@ -127,6 +148,7 @@ function updateFloorPicker() {
 window.pickFloor = function (g, fid) {
   caveFloor[g] = fid;
   cavePick = null;
+  if (!caveMode) { setCaveMode(true); return; }
   renderCaves();
   markerLayer.clearLayers();
   for (const k in markerByPoint) delete markerByPoint[k];
