@@ -20,7 +20,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
-from .mapindex import Candidate, MapIndex
+from genshinmap.backend.maps.mapindex import Candidate, MapIndex
 
 # kind -> (эмодзи, название для журнала)
 KINDS = {

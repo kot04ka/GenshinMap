@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 
 # data/progress.json в корне проекта
-from .paths import PROJECT_ROOT
+from genshinmap.backend.core.paths import PROJECT_ROOT
 
 PROGRESS_PATH = PROJECT_ROOT / "data" / "progress.json"
 UI_STATE_PATH = PROJECT_ROOT / "data" / "ui_state.json"

@@ -22,16 +22,16 @@ import mss
 import numpy as np
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from ..detector.process_watcher import (
+from genshinmap.backend.game.process_watcher import (
     game_window_rect,
     is_genshin_foreground,
     is_genshin_running,
 )
-from .debug_recorder import DebugRecorder
-from .layout import ANCHORS, ui_scale
-from .layout import region_from_frac as _layout_region
-from .minimap_check import MinimapCheck
-from .position_tracker import (
+from genshinmap.backend.vision.debug_recorder import DebugRecorder
+from genshinmap.backend.vision.layout import ANCHORS, ui_scale
+from genshinmap.backend.vision.layout import region_from_frac as _layout_region
+from genshinmap.backend.vision.minimap_check import MinimapCheck
+from genshinmap.backend.vision.position_tracker import (
     Position,
     PositionTracker,
     ensure_reference,
@@ -39,7 +39,7 @@ from .position_tracker import (
     reference_path,
     water_reference_path,
 )
-from .prompt_detector import PromptDetector, parse_prompt_lines
+from genshinmap.backend.vision.prompt_detector import PromptDetector, parse_prompt_lines
 
 # Прыжок позиции дальше JUMP_UNITS от недавней (за JUMP_MEMORY_S) принимаем только
 # после JUMP_CONFIRM подряд совпадающих (в пределах JUMP_AGREE) результатов.
@@ -127,7 +127,7 @@ class PositionService(QObject):
         # сундуков в это время продолжает работать
         self._slow_pool = cf.ThreadPoolExecutor(max_workers=1, thread_name_prefix="pos-slow")
         self._slow: tuple[cf.Future, float, PositionTracker] | None = None
-        from ..paths import PROJECT_ROOT
+        from genshinmap.backend.core.paths import PROJECT_ROOT
 
         self._minimap_check = MinimapCheck(PROJECT_ROOT / "assets" / "ui")
         self.ui_s = 1.0                         # пикселей окна на пиксель раскладки 1080p
@@ -437,7 +437,7 @@ class PositionService(QObject):
 
     def _get_ocr(self):
         if self._ocr is None:
-            from .ocr import ScreenOcr
+            from genshinmap.backend.vision.ocr import ScreenOcr
             self._ocr = ScreenOcr("en-US" if self.game_lang == "en" else "ru")
         return self._ocr
 

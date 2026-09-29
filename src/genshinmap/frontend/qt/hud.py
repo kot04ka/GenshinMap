@@ -91,7 +91,7 @@ class NavHud(QWidget):
 
     def toast(self, text: str, color: str = "#3fb950") -> None:
         """Короткое сообщение поверх игры (отметка/отмена) на TOAST_MS."""
-        from ..i18n import tr
+        from genshinmap.backend.core.i18n import tr
 
         if not self.show_toasts:
             return
@@ -192,7 +192,7 @@ class NavHud(QWidget):
     @staticmethod
     def _game_screen():
         """Монитор, на котором окно игры (иначе основной)."""
-        from ..detector.process_watcher import game_monitor_name
+        from genshinmap.backend.game.process_watcher import game_monitor_name
 
         name = game_monitor_name()
         for s in QGuiApplication.screens():
@@ -220,7 +220,7 @@ class NavHud(QWidget):
         if d is None:
             p.end()
             return
-        from ..i18n import tr
+        from genshinmap.backend.core.i18n import tr
 
         tp = self.target.get("tp")
         via = self.target.get("via")                   # вход в пещеру по пути к цели
@@ -231,7 +231,7 @@ class NavHud(QWidget):
             dx, dy = self.target["x"] - self.player[0], self.target["y"] - self.player[1]
             aim = (self.target["x"], self.target["y"])
         elif self.path:
-            from ..navigation import lookahead
+            from genshinmap.backend.maps.navigation import lookahead
 
             (ax, ay), rest, _ = lookahead(self.path, *self.player)
             d = max(d, rest) if d > HERE_UNITS else d
@@ -373,7 +373,7 @@ class NavHud(QWidget):
         """Точки пути впереди (мир): по пути A*, иначе прямо (через вход в пещеру)."""
         px, py = self.player
         if self.path:
-            from ..navigation import nearest_index
+            from genshinmap.backend.maps.navigation import nearest_index
 
             pts = [(px, py)] + self.path[nearest_index(self.path, px, py) + 1:]
         else:
@@ -448,7 +448,7 @@ class NavHud(QWidget):
         px, py = self.player
         tx, ty = self.target["x"], self.target["y"]
         if self.path:
-            from ..navigation import nearest_index
+            from genshinmap.backend.maps.navigation import nearest_index
 
             pts = [(px, py)] + self.path[nearest_index(self.path, px, py) + 1:]
         else:

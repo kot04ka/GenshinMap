@@ -20,7 +20,7 @@ assets/map.jpg
 assets/markers/
 assets/templates/
 assets/prompts/
-src/genshinmap/web/mapdata*.js
+src/genshinmap/frontend/web/mapdata*.js
 
 # Старая одиночная раскладка (до мультикарты)
 data/map_meta.json

@@ -28,7 +28,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from .paths import PROJECT_ROOT
+from genshinmap.backend.core.paths import PROJECT_ROOT
 
 BASE = "https://sg-public-api.hoyolab.com/common/map_user/ys_obc/v1/map"
 APP_SN = "ys_obc"

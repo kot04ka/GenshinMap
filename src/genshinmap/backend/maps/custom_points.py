@@ -12,7 +12,7 @@ import math
 import time
 from pathlib import Path
 
-from .paths import PROJECT_ROOT
+from genshinmap.backend.core.paths import PROJECT_ROOT
 
 CUSTOM_PATH = PROJECT_ROOT / "data" / "custom_points.json"
 CUSTOM_LABEL = -1

@@ -26,7 +26,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from genshinmap.vision.position_tracker import (
+from genshinmap.backend.vision.position_tracker import (
     PositionTracker,
     ensure_reference,
     reference_path,

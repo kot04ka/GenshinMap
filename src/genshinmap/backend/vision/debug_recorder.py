@@ -49,7 +49,7 @@ class DebugRecorder:
         self.prune()
         self.rates = dict(LIGHT_RATES if light else FULL_RATES)
         self.auto = light
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        stamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
         d = self.root / f"session_{stamp}"
         for sub in ("minimap", "pickup", "screen", "prompt"):
             (d / sub).mkdir(parents=True, exist_ok=True)

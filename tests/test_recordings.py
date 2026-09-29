@@ -25,9 +25,9 @@ def _sessions():
 
 # ---------- подсказки у сундуков (кадры debug/samples/chest_*.jpg) ----------
 def test_chest_prompt_on_samples():
-    from genshinmap.vision.layout import region_from_frac
-    from genshinmap.vision.ocr import ScreenOcr
-    from genshinmap.vision.prompt_detector import parse_prompt_lines
+    from genshinmap.backend.vision.layout import region_from_frac
+    from genshinmap.backend.vision.ocr import ScreenOcr
+    from genshinmap.backend.vision.prompt_detector import parse_prompt_lines
 
     samples = sorted((DEBUG / "samples").glob("chest_*.jpg"))
     ocr = ScreenOcr("ru")
@@ -52,7 +52,10 @@ def test_chest_prompt_on_samples():
 # ---------- позиция по кадрам мини-карты ----------
 @pytest.mark.parametrize("session", _sessions(), ids=lambda d: d.name)
 def test_replay_matches_recording(session):
-    from genshinmap.vision.position_tracker import PositionTracker, reference_path
+    from genshinmap.backend.vision.position_tracker import (
+        PositionTracker,
+        reference_path,
+    )
 
     log = [json.loads(line) for line in (session / "log.jsonl").read_text(encoding="utf-8").splitlines()
            if line.strip()]

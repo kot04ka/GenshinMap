@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import re
 
-from .paths import WEB_DIR
+from genshinmap.backend.core.paths import WEB_DIR
 
 LANGS = {"ru": "Русский", "en": "English"}
 _CYR = re.compile("[А-Яа-яЁё]")

@@ -11,7 +11,7 @@ import threading
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from .hotkeys import _NAMED_VK
+from genshinmap.frontend.qt.hotkeys import _NAMED_VK
 
 POLL_S = 0.03
 

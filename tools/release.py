@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION_FILE = ROOT / "src" / "genshinmap" / "version.py"
+VERSION_FILE = ROOT / "src" / "genshinmap" / "backend" / "core" / "version.py"
 GH = shutil.which("gh") or r"C:\Program Files\GitHub CLI\gh.exe"
 
 

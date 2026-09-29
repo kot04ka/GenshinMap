@@ -130,8 +130,8 @@ def copy_data() -> None:
             dst.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ref, dst / ref.name)
     # страница карты (mapdata_*.js приложение создаёт само при запуске)
-    web_src = ROOT / "src" / "genshinmap" / "web"
-    web_dst = OUT / "src" / "genshinmap" / "web"
+    web_src = ROOT / "src" / "genshinmap" / "frontend" / "web"
+    web_dst = OUT / "src" / "genshinmap" / "frontend" / "web"
     web_dst.mkdir(parents=True, exist_ok=True)
     shutil.copy2(web_src / "map.html", web_dst / "map.html")
     for f in web_src.glob("i18n_*.json"):                 # словари языков интерфейса

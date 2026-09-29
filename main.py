@@ -17,9 +17,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication
 
-from genshinmap.overlay.window import OverlayWindow
-from genshinmap.paths import FROZEN
-from genshinmap.paths import PROJECT_ROOT as ROOT
+from genshinmap.backend.core.paths import FROZEN
+from genshinmap.backend.core.paths import PROJECT_ROOT as ROOT
+from genshinmap.frontend.qt.window import OverlayWindow
 
 LOGO = ROOT / "assets" / "logo.png"
 
@@ -33,8 +33,8 @@ def _relaunch_as_admin() -> bool:
     """
     if sys.platform != "win32" or os.environ.get("GENSHINMAP_NO_ELEVATE"):
         return False
-    from genshinmap.overlay.hotkeys import is_admin
-    from genshinmap.storage import SettingsStore
+    from genshinmap.backend.core.storage import SettingsStore
+    from genshinmap.frontend.qt.hotkeys import is_admin
 
     if is_admin() or not SettingsStore().get("run_as_admin", True):
         return False
@@ -57,8 +57,8 @@ def main() -> int:
         return 0
     app = QApplication(sys.argv)
     app.setApplicationName("Genshin Interactive Map")
-    from genshinmap import i18n
-    from genshinmap.storage import SettingsStore
+    from genshinmap.backend.core import i18n
+    from genshinmap.backend.core.storage import SettingsStore
 
     i18n.set_lang(os.environ.get("GENSHINMAP_LANG") or SettingsStore().get("ui_lang", "ru"))
     i18n.install_qt(app)

@@ -16,7 +16,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from .vision.position_tracker import _fetch, _tile_url
+from genshinmap.backend.vision.position_tracker import _fetch, _tile_url
 
 TS = 256
 OUT_W = 360               # ширина кадра, px

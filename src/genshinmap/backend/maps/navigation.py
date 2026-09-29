@@ -18,7 +18,11 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from .vision.position_tracker import WATER_ZOOM, ensure_reference, ref_offset
+from genshinmap.backend.vision.position_tracker import (
+    WATER_ZOOM,
+    ensure_reference,
+    ref_offset,
+)
 
 CELL = 8.0                # мировых единиц в клетке сетки
 COST_ROAD = 0.45

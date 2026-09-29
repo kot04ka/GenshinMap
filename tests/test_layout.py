@@ -1,7 +1,11 @@
 """Области интерфейса при разных разрешениях и форматах экрана."""
 import pytest
 
-from genshinmap.vision.layout import frac_from_region, region_from_frac, ui_scale
+from genshinmap.backend.vision.layout import (
+    frac_from_region,
+    region_from_frac,
+    ui_scale,
+)
 
 MINIMAP = {"left": 0.032292, "top": 0.018519, "width": 0.109375, "height": 0.194444}
 

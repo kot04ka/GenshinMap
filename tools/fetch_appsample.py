@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from genshinmap.datasync import build_appsample
+from genshinmap.backend.services.datasync import build_appsample
 
 if __name__ == "__main__":
     build_appsample(2)

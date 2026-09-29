@@ -149,7 +149,7 @@ class WelcomeDialog(QDialog):
         self.finished.connect(self._finish)
 
     def _tick(self) -> None:
-        from ..detector.process_watcher import is_genshin_running
+        from genshinmap.backend.game.process_watcher import is_genshin_running
 
         game = is_genshin_running()
         ps = self.w.position_service

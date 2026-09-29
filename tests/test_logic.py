@@ -4,11 +4,11 @@ import json
 import numpy as np
 import pytest
 
-from genshinmap.automark import AutoMarker, name_stem
-from genshinmap.mapindex import MapIndex
-from genshinmap.navigation import NavGrid, lookahead, nearest_index
-from genshinmap.updater import parse_version
-from genshinmap.vision.prompt_detector import parse_prompt_lines
+from genshinmap.backend.game.automark import AutoMarker, name_stem
+from genshinmap.backend.maps.mapindex import MapIndex
+from genshinmap.backend.maps.navigation import NavGrid, lookahead, nearest_index
+from genshinmap.backend.services.updater import parse_version
+from genshinmap.backend.vision.prompt_detector import parse_prompt_lines
 
 LABELS = [
     {"id": 17, "name": "Обычный сундук", "group": "Сундуки"},
@@ -93,7 +93,7 @@ def test_parse_version():
 
 # ---------- язык ----------
 def test_tr_english():
-    from genshinmap import i18n
+    from genshinmap.backend.core import i18n
 
     i18n.set_lang("en")
     try:
@@ -147,7 +147,7 @@ def test_absence_only_for_plain_surface_chests(tmp_path):
 
 # ---------- что сейчас в игре ----------
 def test_classify_scene():
-    from genshinmap.vision.position_service import classify_scene
+    from genshinmap.backend.vision.position_service import classify_scene
 
     assert classify_scene(np.full((135, 240), 5, np.uint8)) == "loading"
     rng = np.random.default_rng(0)
@@ -162,8 +162,8 @@ def test_classify_scene():
 def test_slow_search_runs_in_background():
     import time as _t
 
-    from genshinmap.vision.position_service import PositionService
-    from genshinmap.vision.position_tracker import Position
+    from genshinmap.backend.vision.position_service import PositionService
+    from genshinmap.backend.vision.position_tracker import Position
 
     class FakeTracker:
         last, last_t = None, 0.0
@@ -191,7 +191,7 @@ def test_slow_search_runs_in_background():
 
 # ---------- задания у сундуков ----------
 def test_quest_mention_and_find():
-    from genshinmap.quests import QuestIndex, quest_mention
+    from genshinmap.backend.maps.quests import QuestIndex, quest_mention
 
     m = quest_mention(["Сундук появится после прохождения квеста «Мечта Сохейля»."])
     assert m and m["names"] == ["Мечта Сохейля"]

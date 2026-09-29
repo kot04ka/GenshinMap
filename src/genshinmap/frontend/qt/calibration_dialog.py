@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ..vision.position_tracker import DEFAULT_SCALE, inner_square
+from genshinmap.backend.vision.position_tracker import DEFAULT_SCALE, inner_square
 
 COLORS = {"minimap": QColor("#ffd24a"), "pickup": QColor("#4ad8ff"),
           "prompt": QColor("#ff6ad5")}
@@ -223,7 +223,7 @@ class CalibrationDialog(QDialog):
         QTimer.singleShot(3000, self._grab_now)
 
     def _grab_now(self) -> None:
-        from ..vision.position_service import game_rect
+        from genshinmap.backend.vision.position_service import game_rect
 
         with mss.mss() as sct:
             shot = np.array(sct.grab(game_rect(sct)))     # только окно игры
@@ -242,7 +242,7 @@ class CalibrationDialog(QDialog):
             self._set_shot(img)
 
     def _set_shot(self, bgr: np.ndarray) -> None:
-        from ..vision.layout import ANCHORS, region_from_frac
+        from genshinmap.backend.vision.layout import ANCHORS, region_from_frac
 
         if self.shot is not None:                 # рамки прошлого снимка -> раскладка
             self._design.update(self._canvas_design())
@@ -257,7 +257,7 @@ class CalibrationDialog(QDialog):
 
     def _canvas_design(self) -> dict:
         """Рамки на текущем снимке -> доли эталонной раскладки (для любого разрешения)."""
-        from ..vision.layout import ANCHORS, frac_from_region
+        from genshinmap.backend.vision.layout import ANCHORS, frac_from_region
 
         if self.shot is None:
             return {m: {"left": fr[0], "top": fr[1], "width": fr[2], "height": fr[3]}
@@ -298,7 +298,7 @@ class CalibrationDialog(QDialog):
         if crop is None:
             self.result.setText("Сначала сделай снимок и обведи мини-карту.")
             return
-        from ..vision.layout import ui_scale
+        from genshinmap.backend.vision.layout import ui_scale
 
         screen_h = 1080.0 * ui_scale(self.shot.shape[1], self.shot.shape[0])
         self.btn_test.setEnabled(False)
@@ -348,7 +348,7 @@ class CalibrationDialog(QDialog):
         h, w = self.shot.shape[:2]
         x, y = int(fr[0] * w), int(fr[1] * h)
         crop = self.shot[y:y + max(6, int(fr[3] * h)), x:x + max(6, int(fr[2] * w))]
-        from ..vision.layout import ui_scale
+        from genshinmap.backend.vision.layout import ui_scale
 
         return (crop.copy(), round(1080 * ui_scale(w, h))) if crop.size else None
 

@@ -9,8 +9,8 @@ import json
 import time
 from pathlib import Path
 
-from .custom_points import CustomPoints
-from .storage import ObservationStore, ProgressStore
+from genshinmap.backend.core.storage import ObservationStore, ProgressStore
+from genshinmap.backend.maps.custom_points import CustomPoints
 
 FORMAT = "genshinmap-progress"
 FORMAT_VERSION = 1

@@ -13,8 +13,8 @@ from pathlib import Path
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
-from ..detector.process_watcher import is_genshin_running
-from .collector_detector import CollectorDetector, Detection
+from genshinmap.backend.game.process_watcher import is_genshin_running
+from genshinmap.backend.vision.collector_detector import CollectorDetector, Detection
 
 
 class DetectionService(QObject):

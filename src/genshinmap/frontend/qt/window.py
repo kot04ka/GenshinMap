@@ -5,12 +5,9 @@
 """
 from __future__ import annotations
 
-import functools
-import http.server
 import json
 import math
 import os
-import socketserver
 import threading
 import time
 from collections import Counter
@@ -44,48 +41,67 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .. import i18n
-from ..automark import AutoMarker, classify
-from ..custom_points import CUSTOM_LABEL, CUSTOM_NAME, CustomPoints
-from ..datasync import DataSync
-from ..detector.process_watcher import is_genshin_running
-from ..i18n import tr
-from ..mapindex import Candidate, MapIndex
-from ..navigation import (
+from genshinmap.backend.core import i18n
+from genshinmap.backend.core.i18n import tr
+from genshinmap.backend.core.paths import PROJECT_ROOT, WEB_DIR, WEB_TO_ROOT
+from genshinmap.backend.core.storage import (
+    ObservationStore,
+    ProgressStore,
+    SettingsStore,
+    UIStateStore,
+)
+from genshinmap.backend.core.version import __version__
+from genshinmap.backend.game.automark import AutoMarker
+from genshinmap.backend.game.process_watcher import is_genshin_running
+from genshinmap.backend.game.progress_io import export_progress, import_progress
+from genshinmap.backend.game.rewards import PrimogemCounter
+from genshinmap.backend.maps.custom_points import (
+    CUSTOM_LABEL,
+    CUSTOM_NAME,
+    CustomPoints,
+)
+from genshinmap.backend.maps.mapdata import (
+    ASSETS_MAPS,
+    DATA_MAPS,
+    load_map_index,
+    map_dir,
+    write_bundle,
+)
+from genshinmap.backend.maps.mapindex import Candidate, MapIndex
+from genshinmap.backend.maps.navigation import (
     NavGrid,
     ensure_road_reference,
     lookahead,
     road_reference_path,
 )
-from ..paths import PROJECT_ROOT, WEB_DIR
-from ..pointinfo import PointInfoService
-from ..progress_io import export_progress, import_progress
-from ..regions import build_regions
-from ..rewards import DEFAULT_PRIMOGEMS, PrimogemCounter
-from ..storage import ObservationStore, ProgressStore, SettingsStore, UIStateStore
-from ..updater import Updater
-from ..version import __version__
-from ..vision.debug_recorder import DebugRecorder
-from ..vision.detection_service import DetectionService
-from ..vision.position_service import PositionService, game_rect, region_from_frac
-from ..vision.position_tracker import (
+from genshinmap.backend.maps.pointinfo import PointInfoService
+from genshinmap.backend.maps.regions import build_regions
+from genshinmap.backend.services.datasync import DataSync
+from genshinmap.backend.services.static_server import ensure_server
+from genshinmap.backend.services.updater import Updater
+from genshinmap.backend.vision.debug_recorder import DebugRecorder
+from genshinmap.backend.vision.detection_service import DetectionService
+from genshinmap.backend.vision.position_service import (
+    PositionService,
+    game_rect,
+    region_from_frac,
+)
+from genshinmap.backend.vision.position_tracker import (
     DEFAULT_SCALE,
     REF_ZOOM,
     reference_path,
     water_reference_path,
 )
-from ..vision.prompt_detector import PromptDetector
-from .bridge import MapBridge
-from .calibration_dialog import CalibrationDialog
-from .hotkeys import HotkeyManager, is_admin
-from .hud import NavHud
-from .input_watcher import InputWatcher
-from .settings_dialog import SettingsDialog
+from genshinmap.backend.vision.prompt_detector import PromptDetector
+from genshinmap.frontend.qt.bridge import MapBridge
+from genshinmap.frontend.qt.calibration_dialog import CalibrationDialog
+from genshinmap.frontend.qt.hotkeys import HotkeyManager, is_admin
+from genshinmap.frontend.qt.hud import NavHud
+from genshinmap.frontend.qt.input_watcher import InputWatcher
+from genshinmap.frontend.qt.settings_dialog import SettingsDialog
 
 MAP_HTML = WEB_DIR / "map.html"
 TEMPLATES_DIR = PROJECT_ROOT / "assets" / "templates"
-DATA_MAPS = PROJECT_ROOT / "data" / "maps"
-ASSETS_MAPS = PROJECT_ROOT / "assets" / "maps"
 LOGO = PROJECT_ROOT / "assets" / "logo.png"
 DEBUG_DIR = PROJECT_ROOT / "debug"
 PROMPTS_DIR = PROJECT_ROOT / "assets" / "prompts"
@@ -109,9 +125,7 @@ SCENES = {
     "background": ("игра не активна", "⏸ Игра свёрнута или не в фокусе — позиция на паузе."),
     "no_game": ("игра не запущена", None),
 }
-CAVE_ENTRY_NAMES = ("Пещера", "Подводная пещера")
 # относительный путь от web/map.html до assets/
-ASSETS_REL = "../../../assets/maps"
 
 # Позиция считается «свежей» для авто-отметки не дольше стольких секунд.
 POSITION_MAX_AGE = 2.5
@@ -163,101 +177,6 @@ QLineEdit, QSpinBox, QDoubleSpinBox { background: #0c1120; border: 1px solid #2c
 """
 
 
-def load_map_index() -> list[dict]:
-    """Список карт из data/maps/index.json ([{id, name, has_tiles, points}])."""
-    idx = DATA_MAPS / "index.json"
-    if not idx.exists():
-        return []
-    return json.loads(idx.read_text(encoding="utf-8"))
-
-
-def _map_dir(map_id: int) -> Path:
-    return DATA_MAPS / str(map_id)
-
-
-def _load_map_payload(map_id: int, name: str, custom: list[dict] | None = None) -> dict:
-    """Собирает данные одной карты (геометрия + категории + точки + регионы)."""
-    d = _map_dir(map_id)
-    meta = json.loads((d / "meta.json").read_text(encoding="utf-8"))
-    labels = json.loads((d / "labels.json").read_text(encoding="utf-8"))
-    points = json.loads((d / "points.json").read_text(encoding="utf-8"))
-
-    en = i18n.lang() == "en"
-    meta["name"] = tr(name)
-    # относительная база иконок этой карты (от web/map.html)
-    meta["icons_base"] = f"{ASSETS_REL}/{map_id}/icons"
-
-    points_by_label: dict[str, list] = {}
-    counts: dict[int, int] = {}
-    for p in points:
-        lid = p["label_id"]
-        points_by_label.setdefault(str(lid), []).append(
-            [p["id"], p["x"], p["y"], p.get("area_id", 0), p.get("layer", 0)])
-        counts[lid] = counts.get(lid, 0) + 1
-
-    # group/kind — по русским данным (логика), name/group_label — на языке интерфейса
-    used_labels = [
-        {"id": l["id"], "name": (l.get("name_en") or tr(l["name"])) if en else l["name"],
-         "group": l["group"], "group_label": (l.get("group_en") or tr(l["group"])) if en else l["group"],
-         "count": counts[l["id"]],
-         "gems": DEFAULT_PRIMOGEMS.get(l["name"], (0,))[0],
-         # «Пещера» / «Подводная пещера» — входы (стоят на поверхности): через них ведём
-         # к сундукам под землёй
-         "kind": "cave" if l["name"] in CAVE_ENTRY_NAMES else classify(l["name"], l.get("group", ""))}
-        for l in labels
-        if l["id"] in counts
-    ]
-    # свои точки — отдельный слой (есть всегда, чтобы добавлять на лету)
-    custom = custom or []
-    used_labels.append({"id": CUSTOM_LABEL, "name": tr(CUSTOM_NAME), "group": CUSTOM_NAME,
-                        "group_label": tr(CUSTOM_NAME), "count": len(custom), "gems": 0,
-                        "kind": "chest"})
-    points_by_label[str(CUSTOM_LABEL)] = [[c["id"], c["x"], c["y"], c.get("area")] for c in custom]
-    anchors_f = _map_dir(map_id) / ("anchors_en.json" if en else "anchors.json")
-    anchors = json.loads(anchors_f.read_text(encoding="utf-8")) if anchors_f.exists() else []
-    regions = build_regions(map_id, points)
-    for r in regions:
-        r["name"] = tr(r["name"])
-    return {"meta": meta, "labels": used_labels, "points_by_label": points_by_label,
-            "regions": regions, "anchors": anchors,
-            "ui": {"lang": i18n.lang(), "table": i18n.table() if en else {}}}
-
-
-def write_bundle(map_id: int, name: str, custom: list[dict] | None = None) -> None:
-    """Записывает web/mapdata_<id>.js (отдельный файл на карту — без коллизий кеша)."""
-    payload = _load_map_payload(map_id, name, custom)
-    js = "window.__MAPDATA=" + json.dumps(payload, ensure_ascii=False) + ";"
-    (WEB_DIR / f"mapdata_{map_id}.js").write_text(js, encoding="utf-8")
-
-
-# --- Локальный http-сервер: страница должна иметь http-origin, иначе Chromium
-#     блокирует загрузку тайлов CDN (v2-карты). Плюс отдаёт assets/иконки. ---
-_SERVER_PORT: int | None = None
-
-
-def _ensure_server() -> int:
-    global _SERVER_PORT
-    if _SERVER_PORT is not None:
-        return _SERVER_PORT
-
-    class _QuietHandler(http.server.SimpleHTTPRequestHandler):
-        def log_message(self, *args) -> None:  # без спама в консоль
-            pass
-
-        def end_headers(self) -> None:
-            # map.html и mapdata_*.js меняются — не даём Chromium брать их из кеша
-            if self.path.split("?")[0].endswith((".html", ".js")):
-                self.send_header("Cache-Control", "no-store")
-            super().end_headers()
-
-    handler = functools.partial(_QuietHandler, directory=str(PROJECT_ROOT))
-    httpd = socketserver.ThreadingTCPServer(("127.0.0.1", 0), handler)
-    httpd.daemon_threads = True
-    threading.Thread(target=httpd.serve_forever, daemon=True).start()
-    _SERVER_PORT = httpd.server_address[1]
-    return _SERVER_PORT
-
-
 class _RefererInterceptor(QWebEngineUrlRequestInterceptor):
     """Проставляет Referer для CDN HoYoLAB (иначе тайлы отдаются с 403)."""
 
@@ -269,7 +188,7 @@ class _RefererInterceptor(QWebEngineUrlRequestInterceptor):
 
 def _map_url(map_id: int) -> QUrl:
     """URL страницы карты через локальный http-сервер (нужен http-origin для CDN)."""
-    port = _ensure_server()
+    port = ensure_server()
     rel = MAP_HTML.relative_to(PROJECT_ROOT).as_posix()
     return QUrl(f"http://127.0.0.1:{port}/{rel}#map={map_id}")
 
@@ -357,7 +276,7 @@ class OverlayWindow(QMainWindow):
         self.point_info = PointInfoService(PROJECT_ROOT / "data" / "point_info", DATA_MAPS)
         self.point_info.loaded.connect(self._on_point_info)
         # сундуки, связанные с заданием (по тексту описаний), и где задания начинаются
-        from ..quests import QuestIndex
+        from genshinmap.backend.maps.quests import QuestIndex
 
         self.quests = QuestIndex(DATA_MAPS)
         self._quest_flags: dict[str, str] = {}    # point_id -> название задания ("" — без названия)
@@ -571,12 +490,12 @@ class OverlayWindow(QMainWindow):
         """Загружает meta/индекс текущей карты, пишет bundle, переключает трекер."""
         mid = self.current_map_id
         self.ui_state.set_current_map(mid)
-        self.meta = json.loads((_map_dir(mid) / "meta.json").read_text(encoding="utf-8"))
+        self.meta = json.loads((map_dir(mid) / "meta.json").read_text(encoding="utf-8"))
         write_bundle(mid, self._map_name(mid), self.custom.for_map(mid))
-        self.map_index = MapIndex(_map_dir(mid) / "points.json")
+        self.map_index = MapIndex(map_dir(mid) / "points.json")
         self._enabled_labels = list(self.ui_state.get_enabled(mid))
         # авто-отметка: понимает по категории, что это (сундук, окулус, фея…)
-        labels = json.loads((_map_dir(mid) / "labels.json").read_text(encoding="utf-8"))
+        labels = json.loads((map_dir(mid) / "labels.json").read_text(encoding="utf-8"))
         self.auto_marker = AutoMarker(self.map_index, labels, self.settings.get("auto_rules"))
         # свои точки участвуют в авто-отметке как сундуки
         self.auto_marker.register_label(CUSTOM_LABEL, tr(CUSTOM_NAME), "chest")
@@ -594,7 +513,7 @@ class OverlayWindow(QMainWindow):
         self.point_info.map_id = mid
         self.point_info.lang = i18n.lang()
         self._load_quests(mid, labels)
-        points = json.loads((_map_dir(mid) / "points.json").read_text(encoding="utf-8"))
+        points = json.loads((map_dir(mid) / "points.json").read_text(encoding="utf-8"))
         self.gems = PrimogemCounter(labels, points, self.settings.get("primogems"))
         self._regions = build_regions(mid, points)
         import numpy as np
@@ -880,7 +799,7 @@ class OverlayWindow(QMainWindow):
         self.detect_btn.setText("⏸ Распознавание подбора" if running else "▶ Распознавать подбор")
 
     def _on_detected(self, name: str, label_id: int, score: float) -> None:
-        ts = datetime.now().strftime("%H:%M:%S")
+        ts = datetime.now().astimezone().strftime("%H:%M:%S")
         self._log(f"{ts}  подобрано: {name}  ({score:.0%})")
         self.recorder.event("detected", name=name, label=label_id, score=round(score, 3))
         if label_id <= 0 or not self._map_ready:
@@ -924,7 +843,7 @@ class OverlayWindow(QMainWindow):
         self.mark_collected(cand.point_id)
         self._auto_marks.append(cand.point_id)
         self.undo_btn.setEnabled(True)
-        ts = datetime.now().strftime("%H:%M:%S")
+        ts = datetime.now().astimezone().strftime("%H:%M:%S")
         item = QListWidgetItem(f"{ts}  {self.auto_marker.describe(cand.label_id)} — собрано "
                                f"({reason}, {cand.dist:.0f} ед.){note}")
         item.setData(Qt.ItemDataRole.UserRole, cand.point_id)
@@ -1015,7 +934,7 @@ class OverlayWindow(QMainWindow):
         if self.recorder.active:
             self.recorder.event("bookmark", **data)
         where = f"{pos.x:.0f}, {pos.y:.0f}" if pos else "позиция неизвестна"
-        self._log(f"{datetime.now():%H:%M:%S}  🔖 закладка ({where})")
+        self._log(f"{datetime.now().astimezone():%H:%M:%S}  🔖 закладка ({where})")
 
     # ---- Позиция игрока (Этап 3) ----
     def _toggle_tracking(self) -> None:
@@ -1071,7 +990,7 @@ class OverlayWindow(QMainWindow):
         self._uid = uid
         self.settings.set("active_uid", uid)
         self._open_profile_stores()
-        self._log(f"{datetime.now():%H:%M:%S}  👤 аккаунт UID {uid}"
+        self._log(f"{datetime.now().astimezone():%H:%M:%S}  👤 аккаунт UID {uid}"
                   + (" — текущий прогресс привязан к нему" if first else " — прогресс переключён"))
         self._auto_marks.clear()
         self._map_ready = False
@@ -1080,7 +999,7 @@ class OverlayWindow(QMainWindow):
 
     # ---- Прогресс в файл ----
     def _export_progress(self) -> None:
-        name = f"genshinmap_progress_{datetime.now():%Y-%m-%d}.json"
+        name = f"genshinmap_progress_{datetime.now().astimezone():%Y-%m-%d}.json"
         path, _ = QFileDialog.getSaveFileName(self, "Сохранить прогресс",
                                               str(Path.home() / "Desktop" / name), "JSON (*.json)")
         if not path:
@@ -1115,9 +1034,9 @@ class OverlayWindow(QMainWindow):
         self.view.load(_map_url(self.current_map_id))
 
     def _open_import(self) -> None:
-        from .import_dialog import ImportDialog
+        from genshinmap.frontend.qt.import_dialog import ImportDialog
 
-        dlg = ImportDialog(self.current_map_id, _map_dir(self.current_map_id),
+        dlg = ImportDialog(self.current_map_id, map_dir(self.current_map_id),
                            set(self.map_index.by_id), parent=self)
         dlg.imported.connect(self._apply_imported)
         dlg.exec()
@@ -1282,10 +1201,10 @@ class OverlayWindow(QMainWindow):
         name = (self.auto_marker.display_of.get(entry[0]) or self.auto_marker.name_of.get(entry[0], "")
                 or tr("Цель"))
         out = PROJECT_ROOT / "data" / "point_info" / str(mid) / f"{pid}_route_{key or 'me'}_{i18n.lang()}.webp"
-        url = f"../../../data/point_info/{mid}/{out.name}"
+        url = f"{WEB_TO_ROOT}/data/point_info/{mid}/{out.name}"
 
         def work() -> None:
-            from ..routeclip import render_route_clip
+            from genshinmap.backend.maps.routeclip import render_route_clip
 
             try:
                 if not (key and out.exists()):
@@ -1357,7 +1276,7 @@ class OverlayWindow(QMainWindow):
             self.hud.heading = math.degrees(math.atan2(dx, -dy)) % 360
 
     def _check_game_foreground(self) -> None:
-        from ..detector.process_watcher import is_genshin_foreground
+        from genshinmap.backend.game.process_watcher import is_genshin_foreground
 
         on = self.settings.get("hud_enabled", True) and is_genshin_foreground()
         if on != self.hud.game_active:
@@ -1466,7 +1385,7 @@ class OverlayWindow(QMainWindow):
         try:
             DEBUG_DIR.mkdir(parents=True, exist_ok=True)
             with open(DEBUG_DIR / "automark.log", "a", encoding="utf-8") as f:
-                f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S}  {text}\n")
+                f.write(f"{datetime.now().astimezone():%Y-%m-%d %H:%M:%S}  {text}\n")
         except OSError:
             pass
 
@@ -1485,7 +1404,7 @@ class OverlayWindow(QMainWindow):
 
     @staticmethod
     def _check_ocr() -> bool:
-        from ..vision.ocr import ScreenOcr
+        from genshinmap.backend.vision.ocr import ScreenOcr
 
         return ScreenOcr("ru").ready
 
@@ -1541,7 +1460,7 @@ class OverlayWindow(QMainWindow):
 
     def _save_pickup_sample(self) -> None:
         """Снимок экрана игры (только если активна игра) в debug/samples/, не больше 20."""
-        from ..detector.process_watcher import is_genshin_foreground
+        from genshinmap.backend.game.process_watcher import is_genshin_foreground
 
         if not is_genshin_foreground():
             return
@@ -1557,7 +1476,7 @@ class OverlayWindow(QMainWindow):
         with mss.mss() as sct:
             img = np.array(sct.grab(game_rect(sct)))       # только окно игры
         img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
-        cv2.imwrite(str(out / f"chest_{datetime.now():%H%M%S}.jpg"), img,
+        cv2.imwrite(str(out / f"chest_{datetime.now().astimezone():%H%M%S}.jpg"), img,
                     [cv2.IMWRITE_JPEG_QUALITY, 85])
 
     def _game_lang(self) -> str:
@@ -1631,7 +1550,7 @@ class OverlayWindow(QMainWindow):
 
     def _on_custom_add(self, x: float, y: float) -> None:
         item = self._add_custom(x, y, note="добавлена вручную")
-        self._log(f"{datetime.now():%H:%M:%S}  ⭐ своя точка добавлена")
+        self._log(f"{datetime.now().astimezone():%H:%M:%S}  ⭐ своя точка добавлена")
         self._js(f"window.highlightPoint({json.dumps(item['id'])}, false);")
 
     def _on_custom_delete(self, pid: str) -> None:
@@ -1639,7 +1558,7 @@ class OverlayWindow(QMainWindow):
             self.map_index.remove_point(pid)
             self.store.unmark(pid)
             self._js(f"window.removeCustomPoint({json.dumps(pid)});")
-            self._log(f"{datetime.now():%H:%M:%S}  ⭐ своя точка удалена")
+            self._log(f"{datetime.now().astimezone():%H:%M:%S}  ⭐ своя точка удалена")
 
     def _valuables_from_pickup(self, fresh: list[str]) -> None:
         """Новые строки «Получено» с названием окулуса/ценности рядом — отмечаем его."""
@@ -1732,7 +1651,7 @@ class OverlayWindow(QMainWindow):
                     and time.time() - prev.get("t", 0) >= self.SECOND_VISIT_S)
 
     def _log_point(self, text: str, point_id: str) -> None:
-        ts = datetime.now().strftime("%H:%M:%S")
+        ts = datetime.now().astimezone().strftime("%H:%M:%S")
         item = QListWidgetItem(f"{ts}  {text}")
         item.setData(Qt.ItemDataRole.UserRole, point_id)
         self.detect_log.insertItem(0, item)
@@ -1963,7 +1882,11 @@ class OverlayWindow(QMainWindow):
 
     def _show_welcome(self) -> None:
         """Первый запуск — 3 шага; после обновления — «Что нового» (по разу)."""
-        from .welcome import WHATS_NEW, WelcomeDialog, WhatsNewDialog
+        from genshinmap.frontend.qt.welcome import (
+            WHATS_NEW,
+            WelcomeDialog,
+            WhatsNewDialog,
+        )
 
         last = self.ui_state.data.get("last_version")
         self.ui_state.data["last_version"] = __version__
@@ -1987,24 +1910,24 @@ class OverlayWindow(QMainWindow):
         self._quest_checked = set(self._quest_flags)
         if not self.quests.load(mid):
             # точки начала заданий: разово скачать описания меток «Задания мира»
-            from ..pointinfo import BASE, HEADERS, _get_json
+            from genshinmap.backend.maps.pointinfo import BASE, HEADERS, _get_json
 
             def fetch(pid) -> str:
                 info = _get_json(f"{BASE}/point/info?point_id={pid}&map_id={mid}"
                                  f"&app_sn=ys_obc&lang=ru-ru", HEADERS)["data"]["info"]
                 return info.get("content") or ""
 
-            points = json.loads((_map_dir(mid) / "points.json").read_text(encoding="utf-8"))
+            points = json.loads((map_dir(mid) / "points.json").read_text(encoding="utf-8"))
             self.quests.build_async(mid, points, labels, fetch)
 
     def _quests_done(self) -> set[str]:
-        from ..quests import norm_name
+        from genshinmap.backend.maps.quests import norm_name
 
         return {norm_name(n) for n in self.ui_state.data.get("quests_done", [])}
 
     def _quest_open(self, pid: str) -> bool:
         """Сундук связан с заданием, которое игрок ещё не отметил сделанным."""
-        from ..quests import norm_name
+        from genshinmap.backend.maps.quests import norm_name
 
         if pid not in self._quest_flags:
             return False
@@ -2013,7 +1936,7 @@ class OverlayWindow(QMainWindow):
 
     def _on_point_info(self, pid: str, card_json: str) -> None:
         """Карточка точки пришла: ищем в тексте задание, дополняем карточку."""
-        from ..quests import norm_name, quest_mention
+        from genshinmap.backend.maps.quests import norm_name, quest_mention
 
         try:
             card = json.loads(card_json)
@@ -2042,7 +1965,7 @@ class OverlayWindow(QMainWindow):
         f.write_text(json.dumps(self._quest_flags, ensure_ascii=False), encoding="utf-8")
 
     def _on_quest_done(self, name: str, done: bool) -> None:
-        from ..quests import norm_name
+        from genshinmap.backend.maps.quests import norm_name
 
         names = [n for n in self.ui_state.data.get("quests_done", []) if norm_name(n) != norm_name(name)]
         if done:

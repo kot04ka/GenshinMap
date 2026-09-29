@@ -31,8 +31,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ..automark import DEFAULT_RULES
-from ..storage import DEFAULT_SETTINGS
+from genshinmap.backend.core.storage import DEFAULT_SETTINGS
+from genshinmap.backend.game.automark import DEFAULT_RULES
 
 MUTED = "#8b9ab8"
 
@@ -371,7 +371,7 @@ class SettingsDialog(QDialog):
         lay.addStretch(1)
 
     def _build_language(self, s: dict) -> None:
-        from ..i18n import LANGS
+        from genshinmap.backend.core.i18n import LANGS
 
         lay = self._page("🌐", "Язык", "")
         c = self._card(lay)

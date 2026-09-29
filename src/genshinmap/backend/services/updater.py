@@ -22,8 +22,8 @@ from pathlib import Path
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from .paths import FROZEN, PROJECT_ROOT
-from .version import UPDATE_REPO, __version__
+from genshinmap.backend.core.paths import FROZEN, PROJECT_ROOT
+from genshinmap.backend.core.version import UPDATE_REPO, __version__
 
 API = "https://api.github.com/repos/{repo}/releases/latest"
 ASSET_NAME = "GenshinMap.zip"
