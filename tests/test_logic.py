@@ -86,6 +86,22 @@ def test_astar_goes_around_wall():
     assert max(c[0] for c in cells) >= 15        # обошёл снизу
 
 
+def test_astar_native_matches_python():
+    """Rust-версия A* (native/) даёт ровно тот же путь, что и Python."""
+    from genshinmap.backend.maps import navigation
+
+    if not navigation.NATIVE:
+        pytest.skip("genshinmap_native не собран")
+    rng = np.random.default_rng(7)
+    for _ in range(40):
+        h, w = rng.integers(8, 60, size=2)
+        cost = rng.choice(np.array([0.45, 1.0, 4.0, 6.0, np.inf], np.float32), size=(h, w),
+                          p=[0.15, 0.5, 0.1, 0.1, 0.15])
+        s = (int(rng.integers(h)), int(rng.integers(w)))
+        g = (int(rng.integers(h)), int(rng.integers(w)))
+        assert NavGrid._astar(cost, s, g) == NavGrid._astar_py(cost, s, g)
+
+
 def test_parse_version():
     assert parse_version("v1.0.10") > parse_version("1.0.9")
     assert parse_version("мусор") == (0,)

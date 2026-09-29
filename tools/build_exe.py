@@ -20,6 +20,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools"))
+from build_native import build as build_native
+
 # Собираем ТОЛЬКО в служебную папку build/: её никто не запускает. Раньше сборка
 # шла в dist/ и перезаписывала программу, запущенную оттуда (терялся прогресс).
 BUILD = ROOT / "build"
@@ -188,6 +191,7 @@ def make_zip() -> Path:
 
 
 def main() -> None:
+    build_native()      # Rust A*; без Rust exe соберётся с A* на Python
     run_pyinstaller()
     slim()
     copy_data()

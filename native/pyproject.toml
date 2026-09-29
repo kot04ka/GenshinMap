@@ -1,0 +1,11 @@
+[build-system]
+requires = ["maturin>=1.5,<2"]
+build-backend = "maturin"
+
+[project]
+name = "genshinmap_native"
+requires-python = ">=3.10"
+description = "Быстрые расчёты GenshinMap на Rust (A* по сетке стоимостей)"
+
+[tool.maturin]
+features = ["python", "pyo3/extension-module"]

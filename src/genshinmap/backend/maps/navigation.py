@@ -8,6 +8,9 @@
   - дороги (маска дорог по цвету тайлов) — дешевле всего;
   - остальная земля — обычная цена.
 Поиск идёт в окне вокруг старта и цели; путь упрощается до ломаной.
+
+A* считается в Rust-модуле genshinmap_native (папка native/), если он собран;
+иначе — тем же алгоритмом на Python (_astar_py). Результат одинаковый.
 """
 from __future__ import annotations
 
@@ -23,6 +26,13 @@ from genshinmap.backend.vision.position_tracker import (
     ensure_reference,
     ref_offset,
 )
+
+try:                                   # быстрый A* на Rust (native/), необязателен
+    from genshinmap_native import astar as _astar_native
+except ImportError:
+    _astar_native = None
+
+NATIVE = _astar_native is not None
 
 CELL = 8.0                # мировых единиц в клетке сетки
 COST_ROAD = 0.45
@@ -136,6 +146,13 @@ class NavGrid:
 
     @staticmethod
     def _astar(cost: np.ndarray, s: tuple[int, int], g: tuple[int, int]) -> list[tuple[int, int]]:
+        if _astar_native is not None:
+            c = np.ascontiguousarray(cost, dtype=np.float32)
+            return _astar_native(c.tobytes(), c.shape[0], c.shape[1], s, g, COST_ROAD, COST_LAND)
+        return NavGrid._astar_py(cost, s, g)
+
+    @staticmethod
+    def _astar_py(cost: np.ndarray, s: tuple[int, int], g: tuple[int, int]) -> list[tuple[int, int]]:
         H, W = cost.shape
         steps = [(-1, 0, 1.0), (1, 0, 1.0), (0, -1, 1.0), (0, 1, 1.0),
                  (-1, -1, 1.414), (-1, 1, 1.414), (1, -1, 1.414), (1, 1, 1.414)]
@@ -159,7 +176,7 @@ class NavGrid:
                 ny, nx = cy + dy, cx + dx
                 if not (0 <= ny < H and 0 <= nx < W):
                     continue
-                c = cost[ny, nx]
+                c = float(cost[ny, nx])           # float64: numpy-скаляр считал бы во float32
                 if not math.isfinite(c):
                     if cost_s is not None or (ny, nx) != g:
                         continue

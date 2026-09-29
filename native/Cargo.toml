@@ -1,0 +1,23 @@
+[package]
+name = "genshinmap_native"
+version = "0.1.0"
+edition = "2021"
+description = "Быстрые расчёты GenshinMap на Rust (A* по сетке стоимостей)"
+license = "MIT"
+publish = false
+
+[lib]
+name = "genshinmap_native"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3 = { version = "0.23", features = ["abi3-py310"], optional = true }
+
+[features]
+python = ["dep:pyo3"]
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
+
