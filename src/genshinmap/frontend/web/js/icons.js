@@ -40,6 +40,9 @@ const ICON_PATHS = {
   portal: '<circle cx="12" cy="12" r="10"/><path d="M12 6a6 6 0 1 0 6 6"/><path d="M12 10a2 2 0 1 0 2 2"/>',
 };
 
+// Кликабельный div/span — доступен с клавиатуры: Tab + Enter/пробел (см. app.js)
+function kbButton(el) { el.setAttribute('role', 'button'); el.tabIndex = 0; return el; }
+
 function ICON(name, cls) {
   const p = ICON_PATHS[name];
   if (!p) return '';

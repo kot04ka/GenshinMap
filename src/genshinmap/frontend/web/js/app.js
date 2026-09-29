@@ -48,6 +48,16 @@ function trySignalReady() {
   }
 }
 
+// Enter / пробел на элементе role="button" (чипы регионов, группы, слои) — как клик
+document.addEventListener('keydown', e => {
+  const t = e.target;
+  if ((e.key === 'Enter' || e.key === ' ') && t.getAttribute && t.getAttribute('role') === 'button'
+      && t.tagName !== 'BUTTON' && t.tagName !== 'A') {
+    e.preventDefault();
+    t.click();
+  }
+});
+
 // Подгружаем бандл нужной карты по фрагменту #map=<id> и строим карту.
 (function loadBundle() {
   const params = new URLSearchParams(location.hash.slice(1));

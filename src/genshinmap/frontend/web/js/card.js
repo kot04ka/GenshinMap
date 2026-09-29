@@ -154,7 +154,7 @@ function clearHtml() {
   h += '<div class="tips-h clr-near">Ближайшее несобранное</div>';
   for (const [d, pid, labelId] of near.slice(0, 8)) {
     const l = labelById[labelId] || {};
-    h += `<div class="clr-item" onclick="setTarget('${pid}')"><img src="${iconUrl(labelId)}" alt="" onerror="this.remove()">` +
+    h += `<div class="clr-item" role="button" tabindex="0" onclick="setTarget('${pid}')"><img src="${iconUrl(labelId)}" alt="" onerror="this.remove()">` +
          `<span>${esc(l.name || '')}</span><span class="d">${Math.round(d)} ед. ›</span></div>`;
   }
   return h;

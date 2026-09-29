@@ -104,12 +104,12 @@ function buildRegions() {
   box.innerHTML = '';
   if (!REGIONS.length) return;
   const all = document.createElement('div');
-  all.className = 'rg'; all.dataset.id = ''; all.textContent = 'Весь мир';
+  all.className = 'rg'; all.dataset.id = ''; kbButton(all); all.textContent = 'Весь мир';
   all.onclick = () => selectRegion(null);
   box.appendChild(all);
   REGIONS.forEach(r => {
     const el = document.createElement('div');
-    el.className = 'rg'; el.dataset.id = r.id;
+    el.className = 'rg'; el.dataset.id = r.id; kbButton(el);
     el.innerHTML = `${r.name}<span class="pc"></span>`;
     el.title = 'Показать регион (повторный клик — только перелёт)';
     el.onclick = () => selectRegion(r.id);

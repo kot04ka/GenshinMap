@@ -14,7 +14,7 @@ function buildPanel() {
   names.forEach(gname => {
     const items = groups[gname];
     const g = document.createElement('div'); g.className = 'grp';
-    const h = document.createElement('div'); h.className = 'grp-h';
+    const h = document.createElement('div'); h.className = 'grp-h'; kbButton(h);
     const gcb = document.createElement('input'); gcb.type = 'checkbox'; gcb.className = 'cb';
     gcb.title = 'Включить/выключить всю группу';
     gcb.onclick = e => e.stopPropagation();
@@ -114,7 +114,7 @@ function renderActive() {
   for (const id of enabled) {
     const l = labelById[id];
     if (!l) continue;
-    const chip = document.createElement('span'); chip.className = 'chip';
+    const chip = document.createElement('span'); chip.className = 'chip'; kbButton(chip);
     chip.title = 'Выключить слой';
     chip.innerHTML = `<img src="${iconUrl(id)}" alt="" onerror="this.remove()"><span></span>${ICON('x', 'x')}`;
     chip.querySelector('span').textContent = l.name;
