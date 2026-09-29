@@ -13,6 +13,7 @@
     data/maps/<id>/appsample.json  точка HoYoLAB -> метка appsample (для советов)
     data/maps/<id>/anchors.json    названия мест [[имя, x, y, уровень 1|2], ...]
     data/maps/<id>/anchors_en.json то же по-английски (labels.json: name_en, group_en)
+    data/maps/<id>/floors.json     этажи пещер: картинки appsample, границы, входы
     assets/maps/<id>/icons/<label_id>.png
 """
 from __future__ import annotations
@@ -248,7 +249,31 @@ def build_appsample(map_id: int = 2, log: Log = print) -> dict[str, list]:
             mapping[str(p["id"])] = [best[1], f"o{p['label_id']}"]
     _write_json(DATA_MAPS / str(map_id) / "appsample.json", mapping)
     log(f"appsample: сопоставлено {len(mapping)} из {len(points)} точек")
+    try:
+        build_floor_data(map_id, markers, mapping, log)
+    except Exception as e:  # noqa: BLE001 — нет этажей: карта работает и без них
+        log(f"этажи пещер: не удалось ({e})")
     return mapping
+
+
+def build_floor_data(map_id: int = 2, markers: list | None = None, mapping: dict | None = None,
+                     log: Log = print) -> int:
+    """data/maps/<id>/floors.json — этажи пещер (картинки appsample) и входы."""
+    from genshinmap.backend.maps.floors import build_floors, fetch_floor_table
+
+    d = DATA_MAPS / str(map_id)
+    if markers is None:
+        markers = _get_json(MARKERS_URL, {"User-Agent": "Mozilla/5.0"}, timeout=60)["data"]
+    if mapping is None:
+        mapping = json.loads((d / "appsample.json").read_text(encoding="utf-8"))
+    floors = build_floors(map_id, fetch_floor_table(),
+                          json.loads((d / "points.json").read_text(encoding="utf-8")),
+                          json.loads((d / "labels.json").read_text(encoding="utf-8")),
+                          mapping, {m[0]: m[4] for m in markers})
+    _write_json(d / "floors.json", floors)
+    log(f"этажи пещер: {len(floors)} (входов найдено у "
+        f"{len({f['group'] for f in floors if f.get('entrances')})} пещер)")
+    return len(floors)
 
 
 # ---------- автообновление в приложении ----------
@@ -284,7 +309,10 @@ class DataSync(QObject):
                                  + (", новая версия карты" if e["version_changed"] else ""))
             update_index(entries)
             if any(e["id"] == 2 and (e["added"] or e["removed"]) for e in entries):
-                build_appsample(2, log=lambda _t: None)
+                build_appsample(2, log=lambda _t: None)      # заодно и этажи пещер
+            elif not (DATA_MAPS / "2" / "floors.json").exists():
+                build_floor_data(2, log=lambda _t: None)
+                notes.append("карты пещер загружены")
             _write_json(SYNC_STATE, {"last": int(time.time())})
         except Exception as e:  # noqa: BLE001 — нет сети: попробуем в следующий раз
             self.failed.emit(f"Данные карты не обновились: {e}")

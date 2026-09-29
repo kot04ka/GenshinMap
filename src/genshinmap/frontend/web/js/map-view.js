@@ -37,6 +37,9 @@ function initMap() {
   map.createPane('anchorPane').style.zIndex = 450;   // названия мест — под иконками
   map.createPane('pathPane').style.zIndex = 445;     // линии пути — по кнопке «путь»
   map.getPane('pathPane').style.display = 'none';
+  map.createPane('cavePane').style.zIndex = 430;     // этажи пещер — над тайлами, под иконками
+  map.createPane('caveLabelPane').style.zIndex = 640;   // входы и путь в пещере — над иконками
+  map.getPane('cavePane').style.pointerEvents = 'none';
   markerLayer.addTo(map);
   regionLayer.addTo(map);
   anchorLayer.addTo(map);
@@ -58,6 +61,7 @@ function initMap() {
     if (document.body.classList.contains('compact')) scheduleFollowResume();
   });
   map.on('moveend zoomend', debounce(function () { renderVisible(); reportState(); }, 100));
+  map.on('moveend', debounce(() => { if (caveMode) renderCaves(); else updateFloorPicker(); }, 150));
   updateRegionLabels();
 }
 
@@ -80,6 +84,10 @@ function addViewControls() {
       const routeBtn = L.DomUtil.create('a', '', box);
       routeBtn.innerHTML = ICON('route'); routeBtn.title = 'Маршрут по несобранным сундукам региона';
       routeBtn.onclick = () => (route ? clearTarget() : startRoute());
+      const caveBtn = L.DomUtil.create('a', 'cave-btn', box);
+      caveBtn.id = 'cave-toggle';
+      caveBtn.innerHTML = ICON('cave'); caveBtn.title = 'Пещеры и подземелья: карты этажей и входы';
+      caveBtn.onclick = () => toggleCaves();
       const clearBtn = L.DomUtil.create('a', '', box);
       clearBtn.innerHTML = ICON('clear'); clearBtn.title = 'Зачистка региона: что осталось';
       clearBtn.onclick = () => toggleClear();

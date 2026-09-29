@@ -59,6 +59,7 @@ from genshinmap.backend.maps.custom_points import (
     CUSTOM_NAME,
     CustomPoints,
 )
+from genshinmap.backend.maps.floors import cave_route, load_floors
 from genshinmap.backend.maps.mapdata import (
     ASSETS_MAPS,
     DATA_MAPS,
@@ -359,6 +360,9 @@ class OverlayWindow(QMainWindow):
         self.bridge.routeClipRequested.connect(self._on_route_clip_requested)
         self.bridge.questDone.connect(self._on_quest_done)
         self.bridge.mapSwitchRequested.connect(self.switch_map)
+        self.bridge.caveRouteRequested.connect(self._on_cave_route_requested)
+        self.bridge.caveRouteReady.connect(
+            lambda pid, js: self._js(f"window.showCaveRoute({json.dumps(pid)}, {js});"))
         self.bridge.routeClipReady.connect(
             lambda pid, url: self._js(f"window.showRouteClip({json.dumps(pid)}, {json.dumps(url)});"))
         self.point_info.loaded.connect(self._on_card_for_hud)
@@ -1216,6 +1220,29 @@ class OverlayWindow(QMainWindow):
 
         threading.Thread(target=work, daemon=True).start()
 
+    def _on_cave_route_requested(self, pid: str) -> None:
+        """Путь от входа пещеры до точки (A* по картинке этажа). В фоне: картинку
+        этажа, возможно, ещё надо скачать."""
+        mid = self.current_map_id
+        d = map_dir(mid)
+        entry = self.map_index.by_id.get(pid) if self.map_index else None
+        pos = self.position_service.latest(30.0)
+        player = (pos.x, pos.y) if pos else None
+
+        def work() -> None:
+            result = None
+            try:
+                raw = json.loads((d / "points.json").read_text(encoding="utf-8"))
+                floor = next((p.get("floor") for p in raw if str(p["id"]) == pid), None)
+                if floor and entry is not None:
+                    pts = {str(p["id"]): (p["x"], p["y"]) for p in raw}
+                    result = cave_route(d, load_floors(d), pts, pid, floor, player)
+            except Exception as e:  # noqa: BLE001 — нет сети/картинки: карточка скажет «не удалось»
+                self._diag(f"путь в пещере: {e}")
+            self.bridge.caveRouteReady.emit(pid, json.dumps(result))
+
+        threading.Thread(target=work, daemon=True).start()
+
     def _on_target_changed(self, target_json: str) -> None:
         target = json.loads(target_json) if target_json else None
         old = self.hud.target or {}
@@ -1943,10 +1970,9 @@ class OverlayWindow(QMainWindow):
         except (json.JSONDecodeError, TypeError):
             card = {}
         self._quest_checked.add(pid)
-        entry = self.map_index.by_id.get(pid) if self.map_index else None
-        chest = entry is not None and self.auto_marker.kind(entry[0]) == "chest"
+        # «Доступ»: задание ищем в тексте у любых точек (не только у сундуков)
         m = quest_mention([card.get("content", ""), card.get("summary", ""),
-                           *[t.get("text", "") for t in card.get("tips", [])]]) if chest else None
+                           *[t.get("text", "") for t in card.get("tips", [])]])
         if m:
             name = m["names"][0] if m["names"] else ""
             start = next((self.quests.find(n) for n in m["names"] if self.quests.find(n)), None)

@@ -19,6 +19,10 @@ pytestmark = pytest.mark.skipif(not (ROOT / "data" / "maps" / "2" / "points.json
 OPEN_ALL = ("LABELS.slice(0, 40).forEach(l => setLabel(l.id, true, true)); refreshPanel(); "
             "selectRegion(REGIONS[0].id); renderVisible(); "
             "openCard([...pointInfo.keys()][100]); toggleClear();")
+# пещера: режим «Пещеры», карточка точки под землёй, галерея
+CAVE = ("const pid = [...pointInfo.keys()].find(k => pointInfo.get(k)[5] && floorOfPoint(k)); "
+        "showCave(pid); setTimeout(() => { openCard(pid); showPointInfo(pid, {tips: [{text: 'Tip', "
+        "img: 'x.png', thumb: 'x.png', votes: 1}]}); openGallery(pid, 0); }, 800);")
 
 
 def _snapshot(tmp_path: Path, *args: str) -> subprocess.CompletedProcess:
@@ -33,7 +37,8 @@ def _snapshot(tmp_path: Path, *args: str) -> subprocess.CompletedProcess:
     ("--js", OPEN_ALL),
     ("--lang", "en", "--js", OPEN_ALL),
     ("--compact", "--size", "460x560", "--js", "openCard([...pointInfo.keys()][100]);"),
-], ids=["ru", "en", "compact"])
+    ("--lang", "en", "--wait", "4", "--js", CAVE),
+], ids=["ru", "en", "compact", "cave-en"])
 def test_map_page(tmp_path, args):
     r = _snapshot(tmp_path, *args)
     assert r.returncode == 0, r.stdout + r.stderr

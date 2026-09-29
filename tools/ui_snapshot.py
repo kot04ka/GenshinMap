@@ -64,10 +64,13 @@ def main() -> int:
     ap.add_argument("--size", default="1400x860")
     ap.add_argument("--compact", action="store_true", help="мини-режим (как оверлей поверх игры)")
     ap.add_argument("--js", default="", help="выполнить после загрузки (открыть карточку и т.п.)")
+    ap.add_argument("--js-file", default="", help="то же, но код из файла (длинные сценарии)")
     ap.add_argument("--wait", type=float, default=4.0, help="секунд ждать после загрузки")
     ap.add_argument("--lang", default="ru", help="ru / en; для en ищет непереведённый русский текст")
     ap.add_argument("--out", default=str(PROJECT_ROOT / "scratch" / "ui_snapshot.png"))
     a = ap.parse_args()
+    if a.js_file:
+        a.js = Path(a.js_file).read_text(encoding="utf-8")
 
     app = QApplication(sys.argv)
     i18n.set_lang(a.lang)

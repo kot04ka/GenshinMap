@@ -9,7 +9,7 @@
   - стрелку у края мини-карты в сторону цели + расстояние (мини-карта Genshin
     всегда смотрит на север — стрелка совпадает с ней);
   - рядом с целью — карточку: подсказка и фото места;
-  - всплывашку «🧰 Богатый сундук отмечен · Ctrl+Alt+Z — отменить» (видна и без цели).
+  - всплывашку «Богатый сундук отмечен · Ctrl+Alt+Z — отменить» (видна и без цели).
 
 Окно HUD скрыто от захвата экрана (SetWindowDisplayAffinity): игрок его видит,
 а распознавание — нет. Иначе путь поверх мини-карты сбивал бы поиск позиции, а
@@ -29,6 +29,7 @@ from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
     QFont,
+    QFontMetrics,
     QGuiApplication,
     QImage,
     QPainter,
@@ -40,7 +41,8 @@ from PyQt6.QtWidgets import QWidget
 
 NEAR_UNITS = 45        # «подходишь» — показать карточку
 HERE_UNITS = 12        # «на месте»
-CARD_W = 300
+CARD_W = 320
+CARD_PHOTO_H = 180   # фото в карточке — обрезано под рамку 16:9
 COMPASS_W = 420
 # путь «под ногами»: перспектива плоской земли (доли высоты экрана, метры ≈ единицы карты)
 GROUND_FEET_Y = 0.72      # ноги персонажа на экране
@@ -78,6 +80,7 @@ class NavHud(QWidget):
         # что показывать (⚙ Настройки → «Поверх игры»)
         self.show_path = self.show_compass = self.show_card = self.show_ground = True
         self.show_toasts = True
+        self.tip_quest = ""
         self.minimap_frac: dict = {}
         self.tip_text = ""
         self.photo: QPixmap | None = None
@@ -106,7 +109,7 @@ class NavHud(QWidget):
     # ---------- данные ----------
     def set_target(self, target: dict | None) -> None:
         if (target or {}).get("pid") != (self.target or {}).get("pid"):
-            self.tip_text, self.photo, self._photo_url = "", None, ""
+            self.tip_text, self.photo, self._photo_url, self.tip_quest = "", None, "", ""
         self.target = target
         self._refresh()
 
@@ -146,7 +149,11 @@ class NavHud(QWidget):
         if not self.target or self.target.get("pid") != pid:
             return
         tips = card.get("tips") or []
-        self.tip_text = card.get("content") or (tips[0]["text"] if tips else "") or ""
+        self.tip_text = card.get("content") or next((t["text"] for t in tips if t.get("text")), "") or ""
+        from genshinmap.backend.maps.quests import quest_mention
+
+        m = quest_mention([card.get("content", ""), *[t.get("text", "") for t in tips]])
+        self.tip_quest = (m["names"][0] if m and m["names"] else "задание") if m else ""
         url = card.get("img") or next((t["img"] for t in tips if t.get("img")), "")
         if url and url != self._photo_url:
             self._photo_url = url
@@ -164,8 +171,12 @@ class NavHud(QWidget):
 
     def _on_photo(self, url: str, img: QImage) -> None:
         if url == self._photo_url:
-            self.photo = QPixmap.fromImage(img).scaledToWidth(
-                CARD_W - 20, Qt.TransformationMode.SmoothTransformation)
+            # обрезаем по центру под рамку фото (cover), чтобы карточка была ровной
+            pm = QPixmap.fromImage(img)
+            tw, th = CARD_W - 20, CARD_PHOTO_H
+            pm = pm.scaled(tw, th, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                           Qt.TransformationMode.SmoothTransformation)
+            self.photo = pm.copy((pm.width() - tw) // 2, (pm.height() - th) // 2, tw, th)
             self.update()
 
     def set_game_active(self, active: bool) -> None:
@@ -269,19 +280,23 @@ class NavHud(QWidget):
         # строка состояния вверху по центру (под мини-картой в игре — строка задания,
         # её не закрываем): телепорт / куда повернуть / расстояние / номер точки
         top = 10.0
+        ic = "navigate"
         if tp:
+            ic = "portal"
             place = f" у «{tp['name']}»" if tp.get("name") else ""
-            status = f"🌀 ТП{place} → 🧰"
+            status = f"ТП{place} → цель"
         elif via:
-            status = f"🕳 к входу в пещеру · {d:.0f} ед."
+            ic = "cave"
+            status = f"к входу в пещеру · {d:.0f} ед."
             if path_on and self.show_compass and self.heading is not None:
                 bearing = math.degrees(math.atan2(aim[0] - self.player[0], -(aim[1] - self.player[1])))
                 top = self._draw_compass(p, w, (bearing - self.heading + 540) % 360 - 180, color)
                 status = f"{self._turn_hint((bearing - self.heading + 540) % 360 - 180)} · " + status
         elif here:
-            status = "🧰 на месте"
+            ic = "pin-map"
+            status = "на месте"
         else:
-            status = f"🧰 {d:.0f} ед."
+            status = f"{d:.0f} ед."
             if path_on and self.show_compass and self.heading is not None:
                 bearing = math.degrees(math.atan2(aim[0] - self.player[0], -(aim[1] - self.player[1])))
                 rel = (bearing - self.heading + 540) % 360 - 180
@@ -293,7 +308,7 @@ class NavHud(QWidget):
         step = self.target.get("step")
         if step:
             status += f" · {step[0]}/{step[1]}"
-        self._draw_status(p, w, top, tr(status), color)
+        self._draw_status(p, w, top, tr(status), color, ic)
 
         # карточка рядом с целью: подсказка + фото
         if self.show_card and not tp and d <= NEAR_UNITS and (self.tip_text or self.photo):
@@ -308,16 +323,20 @@ class NavHud(QWidget):
             return "↩ развернись"
         return "↖ левее" if rel < 0 else "↗ правее"
 
-    def _draw_status(self, p: QPainter, w: int, y: float, text: str, color: QColor) -> None:
-        """Плашка состояния по центру вверху: тёмная подложка, цветная рамка."""
+    def _draw_status(self, p: QPainter, w: int, y: float, text: str, color: QColor,
+                     ic: str = "navigate") -> None:
+        """Плашка состояния по центру вверху: иконка + текст, цветная рамка."""
+        from genshinmap.frontend.qt.icons import icon
+
         p.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
         tw = p.fontMetrics().horizontalAdvance(text)
-        box = QRectF(w / 2 - tw / 2 - 14, y, tw + 28, 28)
+        box = QRectF(w / 2 - (tw + 22) / 2 - 14, y, tw + 22 + 28, 30)
         p.setPen(QPen(color, 1.5))
-        p.setBrush(QColor(10, 14, 22, 215))
-        p.drawRoundedRect(box, 10, 10)
+        p.setBrush(QColor(17, 26, 43, 225))
+        p.drawRoundedRect(box, 11, 11)
+        p.drawPixmap(int(box.x() + 12), int(y + 7), icon(ic, color.name()).pixmap(16, 16))
         p.setPen(QColor(236, 241, 250))
-        p.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
+        p.drawText(QRectF(box.x() + 34, y, tw + 4, 30), Qt.AlignmentFlag.AlignVCenter, text)
 
     def _draw_compass(self, p: QPainter, w: int, rel: float, color: QColor) -> float:
         """Полоса-компас вверху по центру: ▼ — куда бежишь, метка — где цель.
@@ -488,24 +507,71 @@ class NavHud(QWidget):
         p.restore()
 
     def _draw_card(self, p: QPainter, w: int, h: int) -> None:
+        """Карточка у цели: фото места, название, метки (задание, этаж пещеры), совет."""
+        from genshinmap.backend.core.i18n import tr
+        from genshinmap.frontend.qt.icons import icon
+        from genshinmap.frontend.theme import C
+
+        pad, inner = 10, CARD_W - 20
+        t = self.target or {}
+        tags = []                                      # (текст, цвет рамки, цвет текста)
+        if t.get("quest") or self.tip_quest:
+            name = self.tip_quest if self.tip_quest and self.tip_quest != "задание" else ""
+            tags.append((tr("Нужно задание") + (f" «{name}»" if name else ""), "#B58CFF", "#E8DCFF"))
+        if t.get("floor"):
+            tags.append((tr("Пещера · этаж") + f" {t['floor']}", C["accent"], "#D6E6FF"))
+        text = self.tip_text[:220]
+        f_body = QFont("Segoe UI", 10)
+        f_title = QFont("Segoe UI", 11, QFont.Weight.Bold)
+        f_tag = QFont("Segoe UI", 9, QFont.Weight.DemiBold)
+        text_h = QFontMetrics(f_body).boundingRect(0, 0, inner, 1000, Qt.TextFlag.TextWordWrap,
+                                                   text).height() if text else 0
+        photo_h = CARD_PHOTO_H + pad if self.photo else 0
+        tags_h = len(tags) * 24
+        height = pad + photo_h + 30 + tags_h + (text_h + 8 if text else 0) + pad
         x = w - CARD_W - 24
-        y = h * 0.52
-        text = self.tip_text[:180]
-        text_h = 20 + 18 * max(1, math.ceil(len(text) / 34)) if text else 0
-        photo_h = self.photo.height() + 8 if self.photo else 0
-        card = QRectF(x, y, CARD_W, 34 + text_h + photo_h)
-        p.setPen(QPen(QColor("#1f6feb"), 1))
-        p.setBrush(QColor(14, 20, 32, 225))
-        p.drawRoundedRect(card, 10, 10)
-        p.setPen(QColor("#e6ecf6"))
-        p.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        p.drawText(QRectF(x + 10, y + 6, CARD_W - 20, 22), Qt.AlignmentFlag.AlignVCenter,
-                   f"🧰 {self.target.get('name', '')}")
-        cy = y + 32
-        if text:
-            p.setFont(QFont("Segoe UI", 10))
-            p.setPen(QColor("#c9d4e8"))
-            p.drawText(QRectF(x + 10, cy, CARD_W - 20, text_h), Qt.TextFlag.TextWordWrap, text)
-            cy += text_h
+        y = min(h * 0.46, h - height - 24)
+        card = QRectF(x, y, CARD_W, height)
+        p.setPen(QPen(QColor(C["gold"]), 1.2))
+        p.setBrush(QColor(17, 26, 43, 232))
+        p.drawRoundedRect(card, 12, 12)
+        cy = y + pad
         if self.photo:
-            p.drawPixmap(int(x + 10), int(cy), self.photo)
+            clip = QPainterPath()
+            clip.addRoundedRect(QRectF(x + pad, cy, inner, CARD_PHOTO_H), 8, 8)
+            p.save()
+            p.setClipPath(clip)
+            p.drawPixmap(int(x + pad), int(cy), self.photo)
+            p.restore()
+            cy += photo_h
+        # заголовок: иконка + название + расстояние
+        p.drawPixmap(int(x + pad), int(cy + 5), icon("chest", C["gold"]).pixmap(18, 18))
+        p.setFont(f_title)
+        p.setPen(QColor(C["text"]))
+        d = self.distance()
+        dist = f"{d:.0f} {tr('ед.')}" if d is not None else ""
+        p.drawText(QRectF(x + pad + 24, cy, inner - 24 - 60, 28),
+                   Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextSingleLine,
+                   QFontMetrics(f_title).elidedText(t.get("name", ""), Qt.TextElideMode.ElideRight,
+                                                    int(inner - 84)))
+        p.setFont(f_body)
+        p.setPen(QColor(C["text_dim"]))
+        p.drawText(QRectF(x + pad, cy, inner, 28),
+                   Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, dist)
+        cy += 30
+        p.setFont(f_tag)
+        for label, border, fg in tags:
+            tw = QFontMetrics(f_tag).horizontalAdvance(label) + 16
+            r = QRectF(x + pad, cy + 2, min(tw, inner), 19)
+            p.setPen(QPen(QColor(border), 1))
+            b = QColor(border)
+            b.setAlpha(40)
+            p.setBrush(b)
+            p.drawRoundedRect(r, 9.5, 9.5)
+            p.setPen(QColor(fg))
+            p.drawText(r, Qt.AlignmentFlag.AlignCenter, label)
+            cy += 24
+        if text:
+            p.setFont(f_body)
+            p.setPen(QColor(C["text_dim"]))
+            p.drawText(QRectF(x + pad, cy + 4, inner, text_h + 4), Qt.TextFlag.TextWordWrap, text)

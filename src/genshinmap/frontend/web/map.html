@@ -42,8 +42,15 @@
     <button id="mb-route" title="Маршрут по несобранным сундукам региона" aria-label="Маршрут по сундукам"></button>
     <button id="mb-home" title="Вся карта" aria-label="Вся карта"></button>
   </div>
-  <div id="lightbox" title="Закрыть"><img alt=""></div>
+  <div id="lightbox" role="dialog" aria-label="Фото места">
+    <div class="lb-stage"><img alt=""><video controls playsinline style="display:none"></video></div>
+    <button class="lb-x" title="Закрыть (Esc)" aria-label="Закрыть"></button>
+    <button class="lb-prev" title="Предыдущее (←)" aria-label="Предыдущее"></button>
+    <button class="lb-next" title="Следующее (→)" aria-label="Следующее"></button>
+    <div class="lb-bar"><span class="lb-n"></span><span class="lb-cap"></span></div>
+  </div>
   <div id="sheet" role="dialog"><button class="sheet-x" title="Закрыть" aria-label="Закрыть"></button><div id="sheet-body"></div></div>
+  <div id="floor-pick" role="group" aria-label="Этажи пещеры"></div>
   <div id="maptip" role="status"></div>
   <div id="lost" role="status" title="Позиция вернётся сама, когда мини-карта снова совпадёт с картой">Позиция не найдена: подземелье или многоуровневая зона (такого уровня нет на карте HoYoLAB), меню или загрузка. Точка — последнее известное место.</div>
   <div id="nav" role="status"><span class="arrow"></span><span id="nav-txt"></span>
@@ -58,6 +65,7 @@
   <script src="js/state.js"></script>
   <script src="js/map-view.js"></script>
   <script src="js/markers.js"></script>
+  <script src="js/caves.js"></script>
   <script src="js/card.js"></script>
   <script src="js/navigation.js"></script>
   <script src="js/layers.js"></script>

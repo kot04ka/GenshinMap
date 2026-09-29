@@ -14,6 +14,7 @@ from genshinmap.backend.core.paths import PROJECT_ROOT, WEB_DIR, WEB_TO_ROOT
 from genshinmap.backend.game.automark import classify
 from genshinmap.backend.game.rewards import DEFAULT_PRIMOGEMS
 from genshinmap.backend.maps.custom_points import CUSTOM_LABEL, CUSTOM_NAME
+from genshinmap.backend.maps.floors import load_floors
 from genshinmap.backend.maps.regions import build_regions
 
 DATA_MAPS = PROJECT_ROOT / "data" / "maps"
@@ -51,8 +52,10 @@ def load_map_payload(map_id: int, name: str, custom: list[dict] | None = None) -
     counts: dict[int, int] = {}
     for p in points:
         lid = p["label_id"]
-        points_by_label.setdefault(str(lid), []).append(
-            [p["id"], p["x"], p["y"], p.get("area_id", 0), p.get("layer", 0)])
+        row = [p["id"], p["x"], p["y"], p.get("area_id", 0), p.get("layer", 0)]
+        if p.get("floor"):
+            row.append(p["floor"])                       # этаж пещеры (floors.json)
+        points_by_label.setdefault(str(lid), []).append(row)
         counts[lid] = counts.get(lid, 0) + 1
 
     # group/kind — по русским данным (логика), name/group_label — на языке интерфейса
@@ -79,7 +82,10 @@ def load_map_payload(map_id: int, name: str, custom: list[dict] | None = None) -
     for r in regions:
         r["name"] = tr(r["name"])
     maps = [{"id": m["id"], "name": tr(m["name"])} for m in load_map_index()]
-    return {"meta": meta, "maps": maps, "map_id": map_id,
+    floors = load_floors(d)
+    for f in floors:
+        f["name"] = tr(f["name"])
+    return {"meta": meta, "maps": maps, "map_id": map_id, "floors": floors,
             "labels": used_labels, "points_by_label": points_by_label,
             "regions": regions, "anchors": anchors,
             "ui": {"lang": i18n.lang(), "table": i18n.table() if en else {}}}

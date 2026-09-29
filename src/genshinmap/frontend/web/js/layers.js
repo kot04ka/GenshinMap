@@ -137,11 +137,12 @@ function loadData(payload) {
   REGIONS.forEach(r => regionById[r.id] = r);
   for (const lid in POINTS_BY_LABEL) {
     const n = Number(lid);
-    for (const p of POINTS_BY_LABEL[lid]) pointInfo.set(String(p[0]), [p[1], p[2], n, p[3], p[4] || 0]);
+    for (const p of POINTS_BY_LABEL[lid]) pointInfo.set(String(p[0]), [p[1], p[2], n, p[3], p[4] || 0, p[5] || 0]);
   }
   fillMapSelect(d.maps || [], d.map_id);
   document.title = META.name || document.title;
   initMap();
+  initFloors(d.floors);
   buildRegions();
   buildPanel();
   refreshCounts();

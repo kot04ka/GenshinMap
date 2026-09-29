@@ -140,7 +140,7 @@ class NavGrid:
             return []
         pts = np.array([[c[1], c[0]] for c in cells], np.float32).reshape(-1, 1, 2)
         simple = cv2.approxPolyDP(pts, 1.5, False).reshape(-1, 2)
-        path = [self._to_world(cx + x0, cy + y0) for cx, cy in simple]
+        path = [self._to_world(cx + x0, cy + y0) for cx, cy in simple.tolist()]
         path[0], path[-1] = (round(start[0], 1), round(start[1], 1)), (round(goal[0], 1), round(goal[1], 1))
         return path
 

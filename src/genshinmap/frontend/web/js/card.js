@@ -17,71 +17,128 @@ function openCard(pid) {
     document.getElementById('sheet-body').innerHTML = cardHtml(pid);
     document.getElementById('sheet').classList.add('on');
   } else {
-    if (!cardPopup) cardPopup = L.popup({ className: 'gm-card', maxWidth: 310, autoPanPadding: [40, 40] });
+    if (!cardPopup) cardPopup = L.popup({ className: 'gm-card', maxWidth: 360, minWidth: 340, autoPanPadding: [40, 40] });
     cardPopup.setLatLng(toLatLng(info[0], info[1])).setContent(cardHtml(pid)).openOn(map);
   }
   if (!cardInfo[pid] && bridge && bridge.request_point_info) bridge.request_point_info(pid);
 }
 
+// Всё, что можно показать крупно: фото HoYoLAB, фото из советов, анимация пути
+const cardMedia = {};             // pid -> [{src, thumb, caption}]
+function mediaOf(pid, d) {
+  const out = [];
+  if (d && d.img) out.push({ src: d.img, thumb: d.img, caption: d.content || 'Фото места (HoYoLAB)' });
+  if (d && d.video) out.push({ src: d.video, thumb: d.img || '', caption: 'Видео', video: true });
+  for (const t of (d && d.tips) || []) {
+    if (t.img) out.push({ src: t.img, thumb: t.thumb || t.img, caption: t.text || '' });
+  }
+  const c = routeClips[pid];
+  if (c && c !== 'loading') out.unshift({ src: c, thumb: c, caption: 'Как пройти: путь от ближайшего телепорта', clip: true });
+  return out;
+}
+
+// Доступ: нужно ли задание, чтобы туда попасть (по тексту описания и советов)
+function accessHtml(pid, d) {
+  if (d && d.quest) {
+    const q = d.quest;
+    return `<section class="card-sec access quest${q.done ? ' done' : ''}">` +
+      `<div class="sec-h">${ICON('lock')}<span>Доступ: ${q.name ? 'нужно задание «' + esc(q.name) + '»' : 'связано с заданием'}</span>` +
+      (q.done ? '<span class="sec-sub">сделано</span>' : '') + '</div>' +
+      (q.quote ? `<div class="sec-quote">${esc(q.quote)}</div>` : '') +
+      '<div class="card-btns">' +
+      (q.start ? `<button onclick="questGo('${q.start.pid}')">${ICON('pin')}Где начать задание</button>` : '') +
+      (q.name ? `<button onclick="questDone(${esc(JSON.stringify(q.name))}, ${!q.done})">` +
+                `${q.done ? ICON('undo') + 'Не сделано' : ICON('check') + 'Задание сделал'}</button>` : '') +
+      '</div></section>';
+  }
+  // в той же пещере есть места «за задание» — возможно, и вход открывается заданием
+  const f = floorOfPoint(pid);
+  if (f) {
+    const other = [...QUEST].find(k => k !== pid && (floorOfPoint(k) || {}).group === f.group);
+    if (other) {
+      return `<section class="card-sec access maybe"><div class="sec-h">${ICON('help')}<span>Доступ: возможно, по заданию</span></div>` +
+        '<div class="sec-txt">В этой пещере есть места, для которых нужно задание — вход может открываться им.</div>' +
+        `<div class="card-btns"><button onclick="openCard('${other}')">${ICON('lock')}Показать такое место</button></div></section>`;
+    }
+  }
+  if (d && !d.error && !d.custom) {
+    return `<div class="access-ok">${ICON('done', 'inl')}Доступ: задание не упоминается ни в описании, ни в советах</div>`;
+  }
+  return '';
+}
+
 function cardHtml(pid) {
-  const [x, y, labelId, area] = pointInfo.get(pid);
+  const [x, y, labelId, area, layer] = pointInfo.get(pid);
   const lbl = labelById[labelId] || {};
   const rg = regionById[area];
   const got = COLLECTED.has(pid), prob = PROBABLE.has(pid);
   const d = cardInfo[pid];
-  const gems = lbl.gems ? ` · ${ICON('gem', 'inl')}~${lbl.gems}` : '';
-  let dist = '';
-  if (lastPlayer) dist = ` · ${Math.round(Math.hypot(x - lastPlayer.x, y - lastPlayer.y))} ед. от тебя`;
-  let h = `<div class="card-h"><img src="${iconUrl(labelId)}" alt="" onerror="this.remove()">${esc(lbl.name || '')}</div>` +
-          `<div class="card-sub">${rg ? esc(rg.name) : ''}${gems}${dist}</div>`;
-  const layer = pointInfo.get(pid)[4] || 0;
-  if (LAYER_TEXT[layer]) h += `<div class="card-layer">${LAYER_TEXT[layer]}</div>`;
-  h += prob ? `<div class="card-st prob">${ICON('help')}вероятно собрано (не найдено на месте)</div>`
-     : got ? `<div class="card-st ok">${ICON('done')}собрано</div>` : '<div class="card-st">не собрано</div>';
-  // действия — сразу под статусом, чтобы не листать к ним
+  const sub = [];
+  if (rg) sub.push(esc(rg.name));
+  if (lbl.gems) sub.push(`${ICON('gem', 'inl')}~${lbl.gems}`);
+  if (lastPlayer) sub.push(`${Math.round(Math.hypot(x - lastPlayer.x, y - lastPlayer.y))} ед. от тебя`);
+  const pill = prob ? `<span class="pill prob">${ICON('help')}вероятно</span>`
+             : got ? `<span class="pill ok">${ICON('check')}собрано</span>` : '<span class="pill">не собрано</span>';
+  let h = `<header class="card-top"><img class="card-ico" src="${iconUrl(labelId)}" alt="" onerror="this.remove()">` +
+          `<div class="card-title"><div class="card-name">${esc(lbl.name || '')}</div>` +
+          `<div class="card-sub">${sub.join(' · ')}</div></div>${pill}</header>`;
+  if (LAYER_TEXT[layer] && !floorOfPoint(pid)) h += `<div class="card-layer">${LAYER_TEXT[layer]}</div>`;
+
+  // действия — сразу под шапкой, чтобы не листать к ним
   h += '<div class="card-btns">';
   h += got && !prob ? `<button onclick="cardToggle('${pid}')">${ICON('undo')}Снять отметку</button>`
                     : `<button class="primary" onclick="cardToggle('${pid}')">${ICON('check')}${prob ? 'Подтвердить' : 'Собрано'}</button>`;
   h += `<button onclick="setTarget('${pid}')">${ICON('navigate')}Вести сюда</button>`;
-  if (!routeClips[pid]) h += `<button onclick="loadRouteClip('${pid}')">${ICON('play')}Как пройти</button>`;
+  if (routeClips[pid] === undefined) h += `<button onclick="loadRouteClip('${pid}')">${ICON('play')}Как пройти</button>`;
   if (isCustom(pid)) h += `<button class="danger" onclick="deleteCustom('${pid}')">${ICON('trash')}Удалить точку</button>`;
   h += '</div>';
-  h += routeClipHtml(pid);
-  if (d && d.quest) {
-    const q = d.quest;
-    h += `<div class="card-quest${q.done ? ' done' : ''}">${ICON('lock')}${q.name ? 'Нужно задание «' + esc(q.name) + '»' : 'Связан с заданием'}` +
-         (q.done ? ' · сделано' : '') +
-         `<div class="q">${esc(q.quote || '')}</div><div class="card-btns">` +
-         (q.start ? `<button onclick="questGo('${q.start.pid}')">${ICON('pin')}Где начать задание</button>` : '') +
-         (q.name ? `<button onclick="questDone(${esc(JSON.stringify(q.name))}, ${!q.done})">` +
-                   `${q.done ? ICON('undo') + 'Не сделано' : ICON('check') + 'Задание сделал'}</button>` : '') +
-         '</div></div>';
+
+  h += accessHtml(pid, d);
+  h += caveCardHtml(pid);
+
+  if (d && d.custom) return h + '<div class="card-muted">Своя точка: этого объекта нет на карте HoYoLAB.</div>';
+  if (routeClips[pid] === 'loading') h += '<div class="card-muted">Рисую путь от ближайшего телепорта…</div>';
+  else if (routeClips[pid] === '') h += '<div class="card-muted">Анимацию пути сделать не удалось (нет сети?)</div>';
+
+  // «Как найти»: крупное фото + лента превью (клик — галерея)
+  const media = cardMedia[pid] = mediaOf(pid, d);
+  if (media.length) {
+    const m0 = media[0];
+    h += '<section class="card-media">' +
+         `<button class="media-main" onclick="openGallery('${pid}', 0)" title="Открыть крупно">` +
+         `<img src="${esc(m0.thumb || m0.src)}" alt="" loading="lazy">` +
+         (m0.caption ? `<span class="media-cap">${m0.clip ? ICON('play', 'inl') : ''}${esc(m0.caption.slice(0, 80))}</span>` : '') +
+         (media.length > 1 ? `<span class="media-count">${ICON('layers', 'inl')}${media.length}</span>` : '') +
+         '</button>';
+    if (media.length > 1) {
+      h += '<div class="media-strip">';
+      media.slice(1, 9).forEach((m, i) => {
+        h += `<button onclick="openGallery('${pid}', ${i + 1})" title="Открыть крупно" aria-label="Фото ${i + 2}">` +
+             `<img src="${esc(m.thumb || m.src)}" alt="" loading="lazy"></button>`;
+      });
+      h += '</div>';
+    }
+    h += '</section>';
   }
-  if (d && d.custom) {
-    return h + '<div class="card-muted">Своя точка: этого объекта нет на карте HoYoLAB.</div>';
-  }
+
   if (!d) h += '<div class="card-muted">Загружаю подсказки…</div>';
   else if (d.error) h += '<div class="card-muted">Подсказки загрузить не удалось (нет сети?)</div>';
   else {
-    if (d.content || d.img) {
-      h += '<div class="tip">';
-      h += `<div class="card-txt">${d.content ? esc(d.content) : '<span class="card-muted">Фото места</span>'}</div>`;
-      if (d.img) h += `<img class="tip-thumb" src="${esc(d.img)}" title="Открыть крупно" onclick="showPhoto('${esc(d.img)}')">`;
-      h += '</div>';
-    }
-    // советы игроков (appsample): как на их сайте — текст, фото, лайки, дата
-    if ((d.tips && d.tips.length) || d.summary) {
-      h += '<div class="tips-h">Советы игроков <span>appsample</span></div>';
+    const texts = (d.tips || []).filter(t => t.text);
+    if (d.content && !d.img) h += `<div class="card-txt">${esc(d.content)}</div>`;
+    if (texts.length || d.summary) {
+      h += '<section class="tips"><div class="tips-h">Советы игроков <span>appsample</span></div>';
       if (d.summary) h += `<div class="tips-sum">${esc(d.summary)}</div>`;
-      for (const t of (d.tips || [])) {
-        h += '<div class="tip">';
-        h += `<div class="card-txt">${t.text ? esc(t.text) : '<span class="card-muted">Фото</span>'}` +
-             `<div class="tip-meta">${ICON('thumb', 'inl')}${t.votes}${t.date ? ' · ' + esc(t.date) : ''}</div></div>`;
-        if (t.thumb) h += `<img class="tip-thumb" src="${esc(t.thumb)}" loading="lazy" title="Открыть крупно" onclick="showPhoto('${esc(t.img)}')">`;
-        h += '</div>';
+      for (const t of texts) {
+        const mi = t.img ? media.findIndex(m => m.src === t.img) : -1;
+        h += '<div class="tip"><div class="card-txt">' + esc(t.text) +
+             `<div class="tip-meta">${ICON('thumb', 'inl')}${t.votes}${t.date ? ' · ' + esc(t.date) : ''}` +
+             (mi >= 0 ? ` · <button class="linkbtn" onclick="openGallery('${pid}', ${mi})">фото</button>` : '') +
+             '</div></div></div>';
       }
+      h += '</section>';
     }
-    if (!d.content && !d.img && !(d.tips && d.tips.length) && !d.summary)
+    if (!media.length && !d.content && !texts.length && !d.summary)
       h += '<div class="card-muted">У этой точки нет описания и фото</div>';
   }
   return h;
@@ -234,26 +291,59 @@ window.loadRouteClip = function (pid) {
   if (bridge && bridge.request_route_clip) bridge.request_route_clip(pid);
 };
 window.showRouteClip = function (pid, url) { routeClips[String(pid)] = url; refreshCard(pid); };
-function routeClipHtml(pid) {
-  const c = routeClips[pid];
-  if (c === undefined) return '';
-  if (c === 'loading') return '<div class="card-muted">Рисую путь от ближайшего телепорта…</div>';
-  if (!c) return '<div class="card-muted">Анимацию пути сделать не удалось (нет сети?)</div>';
-  return `<div class="route-clip" title="Открыть крупно" onclick="showPhoto('${esc(c)}')">` +
-         `<img src="${esc(c)}" alt=""><span>${ICON('play', 'inl')}Как пройти</span></div>`;
-}
 window.openExt = function (url) { if (bridge && bridge.open_url) bridge.open_url(url); };
 window.cardToggle = function (pid) {
   if (bridge) bridge.on_marker_clicked(String(pid));
   closeCard();
 };
-// фото — крупно прямо в окне (без внешнего браузера); клик/Esc — закрыть
-window.showPhoto = function (url) {
-  const lb = document.getElementById('lightbox');
-  lb.querySelector('img').src = url;
-  lb.classList.add('on');
+// Галерея: фото крупно прямо в окне; ← → листать, Esc или клик по фону — закрыть
+let gallery = { list: [], i: 0 };
+window.openGallery = function (pid, i) {
+  gallery = { list: cardMedia[String(pid)] || [], i: i || 0 };
+  if (!gallery.list.length) return;
+  document.getElementById('lightbox').classList.add('on');
+  showGallery();
+  document.querySelector('#lightbox .lb-x').focus();
 };
-document.getElementById('lightbox').onclick = () => document.getElementById('lightbox').classList.remove('on');
+window.showPhoto = function (url) {        // одиночное фото
+  gallery = { list: [{ src: url, caption: '' }], i: 0 };
+  document.getElementById('lightbox').classList.add('on');
+  showGallery();
+};
+function showGallery() {
+  const lb = document.getElementById('lightbox');
+  const m = gallery.list[gallery.i];
+  const img = lb.querySelector('img'), vid = lb.querySelector('video');
+  if (m.video) { img.style.display = 'none'; vid.style.display = ''; vid.src = m.src; }
+  else { vid.pause(); vid.removeAttribute('src'); vid.style.display = 'none'; img.style.display = ''; img.src = m.src; }
+  lb.querySelector('.lb-cap').textContent = m.caption || '';
+  lb.querySelector('.lb-n').textContent = gallery.list.length > 1 ? `${gallery.i + 1} / ${gallery.list.length}` : '';
+  lb.classList.toggle('multi', gallery.list.length > 1);
+  lb.classList.toggle('has-cap', !!(m.caption || gallery.list.length > 1));
+}
+function galleryStep(d) {
+  if (gallery.list.length < 2) return;
+  gallery.i = (gallery.i + d + gallery.list.length) % gallery.list.length;
+  showGallery();
+}
+function closeGallery() {
+  const lb = document.getElementById('lightbox');
+  lb.classList.remove('on');
+  lb.querySelector('video').pause();
+}
+(function initGallery() {
+  const lb = document.getElementById('lightbox');
+  lb.querySelector('.lb-x').innerHTML = ICON('x');
+  lb.querySelector('.lb-prev').innerHTML = ICON('chevron');
+  lb.querySelector('.lb-next').innerHTML = ICON('chevron');
+  lb.querySelector('.lb-x').onclick = closeGallery;
+  lb.querySelector('.lb-prev').onclick = e => { e.stopPropagation(); galleryStep(-1); };
+  lb.querySelector('.lb-next').onclick = e => { e.stopPropagation(); galleryStep(1); };
+  lb.onclick = e => { if (e.target === lb || e.target.classList.contains('lb-stage')) closeGallery(); };
+})();
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { document.getElementById('lightbox').classList.remove('on'); closeCard(); }
+  const lbOn = document.getElementById('lightbox').classList.contains('on');
+  if (lbOn && e.key === 'ArrowLeft') { galleryStep(-1); e.preventDefault(); }
+  else if (lbOn && e.key === 'ArrowRight') { galleryStep(1); e.preventDefault(); }
+  else if (e.key === 'Escape') { if (lbOn) closeGallery(); else closeCard(); }
 });

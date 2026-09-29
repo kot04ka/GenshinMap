@@ -70,6 +70,7 @@ function reportTarget() {
     pid: navPid, x, y, name: (labelById[labelId] || {}).name || '',
     left: st ? st[1] - st[0] + 1 : 0, step: st,
     layer: pointInfo.get(navPid)[4] || 0,
+    floor: (floorOfPoint(navPid) || {}).name || '', quest: QUEST.has(navPid),
     tp: tpHint ? { x: tpHint.x, y: tpHint.y, name: tpHint.name } : null,
     via: caveVia ? { x: caveVia.x, y: caveVia.y } : null, show_path: showPath }));
 }

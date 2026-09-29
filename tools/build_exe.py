@@ -116,7 +116,9 @@ def copy_data() -> None:
     # данные карт (без кеша подсказок)
     for d in sorted((ROOT / "data" / "maps").iterdir()):
         if d.is_dir():
-            shutil.copytree(d, OUT / "data" / "maps" / d.name, dirs_exist_ok=True)
+            # картинки этажей пещер приложение докачивает само — в сборку не кладём
+            shutil.copytree(d, OUT / "data" / "maps" / d.name, dirs_exist_ok=True,
+                            ignore=shutil.ignore_patterns("floor_img"))
     shutil.copy2(ROOT / "data" / "maps" / "index.json", OUT / "data" / "maps" / "index.json")
     # ассеты: логотип, иконки категорий, референсы позиции (старые тайлы не нужны)
     (OUT / "assets").mkdir(parents=True, exist_ok=True)
