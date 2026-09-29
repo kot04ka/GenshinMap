@@ -136,7 +136,8 @@ def copy_data() -> None:
     shutil.copy2(web_src / "map.html", web_dst / "map.html")
     for f in web_src.glob("i18n_*.json"):                 # словари языков интерфейса
         shutil.copy2(f, web_dst / f.name)
-    shutil.copytree(web_src / "vendor", web_dst / "vendor", dirs_exist_ok=True)
+    for sub in ("vendor", "css", "js"):                       # стили и скрипты страницы
+        shutil.copytree(web_src / sub, web_dst / sub, dirs_exist_ok=True)
     (OUT / "README.txt").write_text(README, encoding="utf-8-sig")
 
 
