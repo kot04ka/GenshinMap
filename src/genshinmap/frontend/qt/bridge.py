@@ -22,6 +22,7 @@ class MapBridge(QObject):
     routeClipRequested = pyqtSignal(str)       # анимация «как пройти» к точке
     routeClipReady = pyqtSignal(str, str)      # point_id, url ("" — не вышло)
     questDone = pyqtSignal(str, bool)          # название задания, сделано ли
+    mapSwitchRequested = pyqtSignal(int)       # выбрана другая карта в заголовке
 
     @pyqtSlot()
     def on_ready(self) -> None:
@@ -61,6 +62,10 @@ class MapBridge(QObject):
     @pyqtSlot(str)
     def request_route_clip(self, point_id: str) -> None:
         self.routeClipRequested.emit(point_id)
+
+    @pyqtSlot(int)
+    def switch_map(self, map_id: int) -> None:
+        self.mapSwitchRequested.emit(map_id)
 
     @pyqtSlot(str)
     def open_url(self, url: str) -> None:

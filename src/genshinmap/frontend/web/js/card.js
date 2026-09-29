@@ -29,36 +29,36 @@ function cardHtml(pid) {
   const rg = regionById[area];
   const got = COLLECTED.has(pid), prob = PROBABLE.has(pid);
   const d = cardInfo[pid];
-  const gems = lbl.gems ? ` · 💎 ~${lbl.gems}` : '';
+  const gems = lbl.gems ? ` · ${ICON('gem', 'inl')}~${lbl.gems}` : '';
   let dist = '';
   if (lastPlayer) dist = ` · ${Math.round(Math.hypot(x - lastPlayer.x, y - lastPlayer.y))} ед. от тебя`;
-  let h = `<div class="card-h"><img src="${iconUrl(labelId)}" onerror="this.remove()">${esc(lbl.name || '')}</div>` +
+  let h = `<div class="card-h"><img src="${iconUrl(labelId)}" alt="" onerror="this.remove()">${esc(lbl.name || '')}</div>` +
           `<div class="card-sub">${rg ? esc(rg.name) : ''}${gems}${dist}</div>`;
   const layer = pointInfo.get(pid)[4] || 0;
   if (LAYER_TEXT[layer]) h += `<div class="card-layer">${LAYER_TEXT[layer]}</div>`;
-  h += prob ? '<div class="card-st prob">❔ вероятно собрано (не найдено на месте)</div>'
-     : got ? '<div class="card-st ok">✓ собрано</div>' : '<div class="card-st">не собрано</div>';
+  h += prob ? `<div class="card-st prob">${ICON('help')}вероятно собрано (не найдено на месте)</div>`
+     : got ? `<div class="card-st ok">${ICON('done')}собрано</div>` : '<div class="card-st">не собрано</div>';
   // действия — сразу под статусом, чтобы не листать к ним
   h += '<div class="card-btns">';
-  h += got && !prob ? `<button onclick="cardToggle('${pid}')">↶ Снять отметку</button>`
-                    : `<button class="primary" onclick="cardToggle('${pid}')">✓ ${prob ? 'Подтвердить' : 'Собрано'}</button>`;
-  h += `<button onclick="setTarget('${pid}')">🧭 Вести сюда</button>`;
-  if (!routeClips[pid]) h += `<button onclick="loadRouteClip('${pid}')">▶ Как пройти</button>`;
-  if (isCustom(pid)) h += `<button onclick="deleteCustom('${pid}')">🗑 Удалить точку</button>`;
+  h += got && !prob ? `<button onclick="cardToggle('${pid}')">${ICON('undo')}Снять отметку</button>`
+                    : `<button class="primary" onclick="cardToggle('${pid}')">${ICON('check')}${prob ? 'Подтвердить' : 'Собрано'}</button>`;
+  h += `<button onclick="setTarget('${pid}')">${ICON('navigate')}Вести сюда</button>`;
+  if (!routeClips[pid]) h += `<button onclick="loadRouteClip('${pid}')">${ICON('play')}Как пройти</button>`;
+  if (isCustom(pid)) h += `<button class="danger" onclick="deleteCustom('${pid}')">${ICON('trash')}Удалить точку</button>`;
   h += '</div>';
   h += routeClipHtml(pid);
   if (d && d.quest) {
     const q = d.quest;
-    h += `<div class="card-quest${q.done ? ' done' : ''}">🔒 ${q.name ? 'Нужно задание «' + esc(q.name) + '»' : 'Связан с заданием'}` +
-         (q.done ? ' · ✓ сделано' : '') +
+    h += `<div class="card-quest${q.done ? ' done' : ''}">${ICON('lock')}${q.name ? 'Нужно задание «' + esc(q.name) + '»' : 'Связан с заданием'}` +
+         (q.done ? ' · сделано' : '') +
          `<div class="q">${esc(q.quote || '')}</div><div class="card-btns">` +
-         (q.start ? `<button onclick="questGo('${q.start.pid}')">⭐ Где начать задание</button>` : '') +
+         (q.start ? `<button onclick="questGo('${q.start.pid}')">${ICON('pin')}Где начать задание</button>` : '') +
          (q.name ? `<button onclick="questDone(${esc(JSON.stringify(q.name))}, ${!q.done})">` +
-                   `${q.done ? '↶ Не сделано' : '✓ Задание сделал'}</button>` : '') +
+                   `${q.done ? ICON('undo') + 'Не сделано' : ICON('check') + 'Задание сделал'}</button>` : '') +
          '</div></div>';
   }
   if (d && d.custom) {
-    return h + '<div class="card-muted">⭐ Своя точка: этого объекта нет на карте HoYoLAB.</div>';
+    return h + '<div class="card-muted">Своя точка: этого объекта нет на карте HoYoLAB.</div>';
   }
   if (!d) h += '<div class="card-muted">Загружаю подсказки…</div>';
   else if (d.error) h += '<div class="card-muted">Подсказки загрузить не удалось (нет сети?)</div>';
@@ -76,7 +76,7 @@ function cardHtml(pid) {
       for (const t of (d.tips || [])) {
         h += '<div class="tip">';
         h += `<div class="card-txt">${t.text ? esc(t.text) : '<span class="card-muted">Фото</span>'}` +
-             `<div class="tip-meta">👍 ${t.votes}${t.date ? ' · ' + esc(t.date) : ''}</div></div>`;
+             `<div class="tip-meta">${ICON('thumb', 'inl')}${t.votes}${t.date ? ' · ' + esc(t.date) : ''}</div></div>`;
         if (t.thumb) h += `<img class="tip-thumb" src="${esc(t.thumb)}" loading="lazy" title="Открыть крупно" onclick="showPhoto('${esc(t.img)}')">`;
         h += '</div>';
       }
@@ -98,11 +98,12 @@ function closeCard() {
   document.getElementById('sheet').classList.remove('on');
   clearOpen = false;
 }
+document.querySelector('#sheet .sheet-x').innerHTML = ICON('x');
 document.querySelector('#sheet .sheet-x').onclick = closeCard;
 // ---------- Зачистка региона ----------
-const KIND_ROWS = [['chest', '🧰', 'Сундуки'], ['valuable', '🔮', 'Окулусы и ценности'],
-  ['seelie', '🧚', 'Феи'], ['challenge', '⏱', 'Испытания'], ['teleport', '📍', 'Телепорты'],
-  ['statue', '🗿', 'Статуи']];
+const KIND_ROWS = [['chest', 'chest', 'Сундуки'], ['valuable', 'sparkles', 'Окулусы и ценности'],
+  ['seelie', 'seelie', 'Феи'], ['challenge', 'timer', 'Испытания'], ['teleport', 'pin', 'Телепорты'],
+  ['statue', 'statue', 'Статуи']];
 let clearOpen = false, clearTimer = null;
 
 function playerArea() {
@@ -131,29 +132,29 @@ function clearHtml() {
     if (l && l.gems) { gemsAll += l.gems; if (got) gemsGot += l.gems; }
     if (!got && lastPlayer) near.push([Math.hypot(x - lastPlayer.x, y - lastPlayer.y), pid, labelId]);
   }
-  let h = `<div class="clr-h">🧹 Зачистка: ${rg ? esc(rg.name) : 'регион не определён'}</div>`;
-  const rows = KIND_ROWS.concat([['custom', '⭐', 'Свои точки']]);
-  for (const [kind, emoji, title] of rows) {
+  let h = `<div class="clr-h">${ICON('clear')}Зачистка: ${rg ? esc(rg.name) : 'регион не определён'}</div>`;
+  const rows = KIND_ROWS.concat([['custom', 'star', 'Свои точки']]);
+  for (const [kind, ic, title] of rows) {
     const st = stat[kind];
     if (!st) continue;
-    const extra = kind === 'chest' && gemsAll ? ` · 💎 ~${gemsGot}/${gemsAll}` : '';
-    h += `<div class="clr-row"><span class="k">${emoji}</span><span class="n">${title}</span>` +
+    const extra = kind === 'chest' && gemsAll ? ` · ${ICON('gem', 'inl')}~${gemsGot}/${gemsAll}` : '';
+    h += `<div class="clr-row"><span class="k">${ICON(ic)}</span><span class="n">${title}</span>` +
          `<span class="v">${st[1]}/${st[0]}${extra}</span></div>` +
          `<div class="clr-bar"><i style="width:${(100 * st[1] / st[0]).toFixed(1)}%"></i></div>`;
   }
-  h += '<div class="card-btns"><button class="primary" onclick="startRoute()">🗺 Маршрут по сундукам</button>' +
-       `<button onclick="toggleHeat()">${heatOn ? '🔥 Скрыть «где остались»' : '🔥 Где остались сундуки'}</button></div>`;
+  h += '<div class="card-btns"><button class="primary" onclick="startRoute()">' + ICON('route') + 'Маршрут по сундукам</button>' +
+       `<button onclick="toggleHeat()">${ICON('flame')}${heatOn ? 'Скрыть «где остались»' : 'Где остались сундуки'}</button></div>`;
   h += '<div class="tips-h">Показать на карте (собранное скрыто)</div><div class="card-btns">' +
-       `<button onclick="showKinds(['chest'])">💎 Сундуки</button>` +
-       `<button onclick="showKinds(['valuable'])">🔮 Окулусы</button>` +
-       `<button onclick="showKinds(['chest','valuable','seelie','challenge','teleport','statue'])">🧭 Всё собираемое</button>` +
+       `<button onclick="showKinds(['chest'])">${ICON('chest')}Сундуки</button>` +
+       `<button onclick="showKinds(['valuable'])">${ICON('sparkles')}Окулусы</button>` +
+       `<button onclick="showKinds(['chest','valuable','seelie','challenge','teleport','statue'])">${ICON('layers')}Всё собираемое</button>` +
        '</div>';
   if (!lastPlayer) return h + '<div class="card-muted">Включи отслеживание позиции — покажу ближайшее.</div>';
   near.sort((a, b) => a[0] - b[0]);
   h += '<div class="tips-h clr-near">Ближайшее несобранное</div>';
   for (const [d, pid, labelId] of near.slice(0, 8)) {
     const l = labelById[labelId] || {};
-    h += `<div class="clr-item" onclick="setTarget('${pid}')"><img src="${iconUrl(labelId)}" onerror="this.remove()">` +
+    h += `<div class="clr-item" onclick="setTarget('${pid}')"><img src="${iconUrl(labelId)}" alt="" onerror="this.remove()">` +
          `<span>${esc(l.name || '')}</span><span class="d">${Math.round(d)} ед. ›</span></div>`;
   }
   return h;
@@ -236,10 +237,10 @@ window.showRouteClip = function (pid, url) { routeClips[String(pid)] = url; refr
 function routeClipHtml(pid) {
   const c = routeClips[pid];
   if (c === undefined) return '';
-  if (c === 'loading') return '<div class="card-muted">▶ Рисую путь от ближайшего телепорта…</div>';
+  if (c === 'loading') return '<div class="card-muted">Рисую путь от ближайшего телепорта…</div>';
   if (!c) return '<div class="card-muted">Анимацию пути сделать не удалось (нет сети?)</div>';
   return `<div class="route-clip" title="Открыть крупно" onclick="showPhoto('${esc(c)}')">` +
-         `<img src="${esc(c)}" alt=""><span>▶ Как пройти</span></div>`;
+         `<img src="${esc(c)}" alt=""><span>${ICON('play', 'inl')}Как пройти</span></div>`;
 }
 window.openExt = function (url) { if (bridge && bridge.open_url) bridge.open_url(url); };
 window.cardToggle = function (pid) {

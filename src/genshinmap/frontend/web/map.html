@@ -9,42 +9,52 @@
 </head>
 <body>
   <div id="panel">
-    <h1><span id="mapname">Карта</span><span class="badge" id="badge">—</span></h1>
+    <header class="p-head">
+      <label class="sr" for="mapsel">Карта</label>
+      <div class="mapsel-wrap">
+        <select id="mapsel" title="Выбрать карту"><option id="mapname">Карта</option></select>
+        <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+      </div>
+    </header>
     <div class="search-wrap">
-      <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 5 1.5-1.5-5-5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
-      <input id="search" placeholder="Поиск категории…" />
+      <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      <input id="search" type="search" placeholder="Поиск категории…" aria-label="Поиск категории" />
     </div>
     <div class="tools">
-      <button class="tbtn" id="btn-hide" title="Не показывать на карте уже собранные точки">Скрыть собранные</button>
-      <button class="tbtn" id="btn-clear" title="Выключить все категории">Снять все слои</button>
+      <button class="tbtn" id="btn-hide" aria-pressed="false" title="Не показывать на карте уже собранные точки"></button>
     </div>
-    <div id="active"></div>
+    <div id="active-bar">
+      <button id="active-toggle" aria-expanded="false" title="Показать / свернуть включённые слои"></button>
+      <button id="btn-clear" class="linkbtn" title="Выключить все категории">Снять все</button>
+    </div>
+    <div id="active" class="collapsed"></div>
     <div id="cats"></div>
     <div id="stat">Загрузка…</div>
   </div>
   <div id="map"></div>
   <div id="regions"></div>
   <div id="minibar">
-    <button id="mb-out" title="Отдалить">−</button>
-    <button id="mb-in" title="Приблизить">+</button>
-    <button id="mb-follow" class="off" title="Следовать за игроком">◎</button>
-    <button id="mb-chest" class="off" title="Вести к ближайшему сундуку">🧰</button>
-    <button id="mb-clear" title="Зачистка региона: что осталось">🧹</button>
-    <button id="mb-route" title="Маршрут по несобранным сундукам региона">🗺</button>
-    <button id="mb-home" title="Вся карта">⌂</button>
+    <button id="mb-out" title="Отдалить" aria-label="Отдалить"></button>
+    <button id="mb-in" title="Приблизить" aria-label="Приблизить"></button>
+    <button id="mb-follow" class="off" title="Следовать за игроком" aria-label="Следовать за игроком"></button>
+    <button id="mb-chest" class="off" title="Вести к ближайшему сундуку" aria-label="Вести к ближайшему сундуку"></button>
+    <button id="mb-clear" title="Зачистка региона: что осталось" aria-label="Зачистка региона"></button>
+    <button id="mb-route" title="Маршрут по несобранным сундукам региона" aria-label="Маршрут по сундукам"></button>
+    <button id="mb-home" title="Вся карта" aria-label="Вся карта"></button>
   </div>
   <div id="lightbox" title="Закрыть"><img alt=""></div>
-  <div id="sheet"><button class="sheet-x" title="Закрыть">✕</button><div id="sheet-body"></div></div>
-  <div id="maptip"></div>
-  <div id="lost" title="Позиция вернётся сама, когда мини-карта снова совпадёт с картой">📍 Позиция не найдена: подземелье или многоуровневая зона (такого уровня нет на карте HoYoLAB), меню или загрузка. Точка — последнее известное место.</div>
-  <div id="nav"><span class="arrow">➤</span><span id="nav-txt"></span>
-    <button id="nav-path" title="Показать путь: на карте, мини-карте и под ногами (Ctrl+Alt+P)">👣</button>
-    <button id="nav-skip" title="Пропустить эту точку маршрута">⏭</button>
-    <button id="nav-x" title="Перестать вести (Ctrl+Alt+X)">✕</button></div>
+  <div id="sheet" role="dialog"><button class="sheet-x" title="Закрыть" aria-label="Закрыть"></button><div id="sheet-body"></div></div>
+  <div id="maptip" role="status"></div>
+  <div id="lost" role="status" title="Позиция вернётся сама, когда мини-карта снова совпадёт с картой">Позиция не найдена: подземелье или многоуровневая зона (такого уровня нет на карте HoYoLAB), меню или загрузка. Точка — последнее известное место.</div>
+  <div id="nav" role="status"><span class="arrow"></span><span id="nav-txt"></span>
+    <button id="nav-path" title="Показать путь: на карте, мини-карте и под ногами (Ctrl+Alt+P)" aria-label="Показать путь"></button>
+    <button id="nav-skip" title="Пропустить эту точку маршрута" aria-label="Пропустить точку"></button>
+    <button id="nav-x" title="Перестать вести (Ctrl+Alt+X)" aria-label="Перестать вести"></button></div>
   <div id="loading"><div class="spinner"></div><div>Загрузка карты…</div></div>
 
   <script src="vendor/leaflet.js"></script>
   <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+  <script src="js/icons.js"></script>
   <script src="js/state.js"></script>
   <script src="js/map-view.js"></script>
   <script src="js/markers.js"></script>

@@ -63,7 +63,9 @@ function clearLayers() {
 
 function setHideCollected(on, silent) {
   hideCollected = !!on;
-  document.getElementById('btn-hide').classList.toggle('on', hideCollected);
+  const b = document.getElementById('btn-hide');
+  b.classList.toggle('on', hideCollected);
+  b.setAttribute('aria-pressed', String(hideCollected));
   if (!silent) { renderVisible(); reportState(); }
 }
 
@@ -88,14 +90,14 @@ function translateTree(root) {
   if (!I18N || !root) return;
   if (root.nodeType === 3) { setText(root); return; }
   if (root.nodeType !== 1) return;
-  for (const a of ['title', 'placeholder', 'alt']) {
+  for (const a of ['title', 'placeholder', 'alt', 'aria-label']) {
     const v = root.getAttribute && root.getAttribute(a);
     if (v && CYR.test(v)) { const t = trText(v); if (t !== v) root.setAttribute(a, t); }
   }
   const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
   for (let n = w.nextNode(); n; n = w.nextNode()) {
     if (n.nodeType === 3) setText(n);
-    else for (const a of ['title', 'placeholder', 'alt']) {
+    else for (const a of ['title', 'placeholder', 'alt', 'aria-label']) {
       const v = n.getAttribute(a);
       if (v && CYR.test(v)) { const t = trText(v); if (t !== v) n.setAttribute(a, t); }
     }
@@ -119,7 +121,7 @@ function setLang(lang, table) {
     }
   });
   i18nObserver.observe(document.body, { childList: true, subtree: true, characterData: true,
-                                       attributes: true, attributeFilter: ['title', 'placeholder'] });
+                                       attributes: true, attributeFilter: ['title', 'placeholder', 'aria-label'] });
 }
 
 // --- Построение карты из бандла mapdata_<id>.js ---
@@ -137,7 +139,7 @@ function loadData(payload) {
     const n = Number(lid);
     for (const p of POINTS_BY_LABEL[lid]) pointInfo.set(String(p[0]), [p[1], p[2], n, p[3], p[4] || 0]);
   }
-  document.getElementById('mapname').textContent = META.name || 'Карта';
+  fillMapSelect(d.maps || [], d.map_id);
   document.title = META.name || document.title;
   initMap();
   buildRegions();

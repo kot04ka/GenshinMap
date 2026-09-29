@@ -20,9 +20,29 @@ from PyQt6.QtWebEngineCore import QWebEnginePage
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import QApplication
 
+from genshinmap.backend.core import i18n
 from genshinmap.backend.core.paths import PROJECT_ROOT, WEB_DIR
 from genshinmap.backend.maps.mapdata import load_map_index, write_bundle
 from genshinmap.backend.services.static_server import ensure_server
+
+# видимые тексты и подсказки с кириллицей (названия мест/точек из данных — не наши)
+CYRILLIC_JS = r"""(() => {
+  const out = new Set(), rx = /[А-Яа-яЁё]/;
+  const skip = el => el.closest('.gm-anchor, .gm-region-lbl, .leaflet-marker-pane, .leaflet-tooltip');
+  const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  for (let n = w.nextNode(); n; n = w.nextNode()) {
+    const el = n.parentElement;
+    if (!el || skip(el) || el.closest('script,style') || !el.offsetParent) continue;
+    if (rx.test(n.nodeValue)) out.add(n.nodeValue.trim().slice(0, 80));
+  }
+  document.querySelectorAll('[title],[placeholder],[aria-label]').forEach(el => {
+    for (const a of ['title', 'placeholder', 'aria-label']) {
+      const v = el.getAttribute(a);
+      if (v && rx.test(v) && !skip(el)) out.add(a + ': ' + v.slice(0, 80));
+    }
+  });
+  return [...out];
+})()"""
 
 
 class _Page(QWebEnginePage):
@@ -45,10 +65,12 @@ def main() -> int:
     ap.add_argument("--compact", action="store_true", help="мини-режим (как оверлей поверх игры)")
     ap.add_argument("--js", default="", help="выполнить после загрузки (открыть карточку и т.п.)")
     ap.add_argument("--wait", type=float, default=4.0, help="секунд ждать после загрузки")
+    ap.add_argument("--lang", default="ru", help="ru / en; для en ищет непереведённый русский текст")
     ap.add_argument("--out", default=str(PROJECT_ROOT / "scratch" / "ui_snapshot.png"))
     a = ap.parse_args()
 
     app = QApplication(sys.argv)
+    i18n.set_lang(a.lang)
     names = {m["id"]: m["name"] for m in load_map_index()}
     write_bundle(a.map, names.get(a.map, "Карта"))
     errors: list[str] = []
@@ -71,7 +93,13 @@ def main() -> int:
         QTimer.singleShot(int(a.wait * 1000), shoot)
 
     def shoot() -> None:
+        if a.lang != "ru":
+            page.runJavaScript(CYRILLIC_JS, 0, cyrillic)
         page.runJavaScript("typeof map !== 'undefined' && map !== null", 0, report)
+
+    def cyrillic(found) -> None:
+        for t in found or []:
+            errors.append(f"не переведено: {t}")
 
     def report(built) -> None:
         if not built:

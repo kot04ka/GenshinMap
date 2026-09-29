@@ -79,7 +79,7 @@ function reportTarget() {
 const TP_PENALTY = 110;      // «цена» телепорта в единицах пути (загрузка, выход)
 const WALK_K = 1.25;         // путь по местности длиннее прямой
 let NAV_OPTS = { autoNext: true, useTp: true };
-let showPath = false;          // линии пути — только по кнопке «👣» (не навязчиво)
+let showPath = false;          // линии пути — только по кнопке «путь» (не навязчиво)
 window.togglePath = function (on) {
   showPath = typeof on === 'boolean' ? on : !showPath;
   if (map) map.getPane('pathPane').style.display = showPath ? '' : 'none';
@@ -219,14 +219,14 @@ window.startRoute = function () {
     if (QUEST.has(pid)) { questSkipped++; continue; }     // нужен квест — не бегаем зря
     ids.push(pid);
   }
-  if (!ids.length) { alertNav('В этом регионе все сундуки собраны 🎉'); return; }
+  if (!ids.length) { alertNav('В этом регионе все сундуки собраны'); return; }
   tpCache = null;
   const tps = openTps();
   route = planRoute(lastPlayer.x, lastPlayer.y, ids, tps);
   if (questSkipped)
-    showMapTip(`🔒 Не в маршруте: ${questSkipped} сундуков, для которых нужно задание (значок 🔒).`, 7000);
+    showMapTip(`Не в маршруте: ${questSkipped} сундуков, для которых нужно задание (значок замка).`, 7000);
   else if (NAV_OPTS.useTp !== false && tps.length < 3)
-    showMapTip('🌀 Отметь на карте открытые телепорты (клик по значку → «Собрано») — маршрут начнёт '
+    showMapTip('Отметь на карте открытые телепорты (клик по значку → «Собрано») — маршрут начнёт '
                + 'предлагать прыжки и станет короче.', 9000);
   routeSkipped = new Set();
   document.getElementById('mb-route').classList.add('on');
@@ -248,8 +248,8 @@ function stopRoute() {
 // Линия маршрута: пешие участки — пунктир, прыжки телепортом — фиолетовым от ТП;
 // номера следующих точек (как в списке задач).
 const ROUTE_NUMBERS = 40;
-const LAYER_ICON = { 1: '🕳', 2: '🌊', 3: '⬇' };
-const LAYER_SHORT = { 1: ' · 🕳 в пещере', 2: ' · 🌊 под водой', 3: ' · ⬇ нижний уровень' };
+const LAYER_ICON = { 1: ICON('cave'), 2: ICON('water'), 3: ICON('down') };
+const LAYER_SHORT = { 1: ' · в пещере', 2: ' · под водой', 3: ' · нижний уровень' };
 function drawRoute() {
   if (!route) return;
   const tps = openTps();
@@ -288,7 +288,7 @@ function drawRoute() {
 function advanceRoute() {
   const next = routeLeft()[0];
   if (next) { setTarget(next, { fromRoute: true, noFit: true }); drawRoute(); }
-  else { alertNav('Маршрут пройден: все сундуки региона собраны 🎉'); clearTarget(); }
+  else { alertNav('Маршрут пройден: все сундуки региона собраны'); clearTarget(); }
 }
 window.skipRoutePoint = function () {
   if (!route || !navPid) return;
@@ -353,7 +353,7 @@ function updateNav() {
     if (!tpLine) tpLine = L.polyline(pts, { pane: 'pathPane', color: '#b58cff', weight: 3, opacity: .95,
                                             className: 'gm-nav-line', interactive: false }).addTo(map);
     else tpLine.setLatLngs(pts);
-    nav.querySelector('.arrow').textContent = '🌀';
+    nav.querySelector('.arrow').innerHTML = ICON('portal');
     nav.classList.remove('here');
     document.getElementById('nav-txt').textContent =
       `${prefix}ТП${hint.name ? ' у «' + hint.name + '»' : ''} → ${name} · ${Math.round(hint.d)} ед. от ТП${layerTxt}`;
@@ -376,7 +376,7 @@ function updateNav() {
     nav.querySelector('.arrow').textContent = ARROWS[Math.round(ang / 45) % 8];
     nav.classList.remove('here');
     document.getElementById('nav-txt').textContent =
-      `${prefix}🕳 К входу в пещеру · ${Math.round(dv)} ед. (${name} внутри, ~${Math.round(via.d)} ед. от входа)`;
+      `${prefix}К входу в пещеру · ${Math.round(dv)} ед. (${name} внутри, ~${Math.round(via.d)} ед. от входа)`;
     const vpts = navPath && navPath.length > 1
       ? [toLatLng(lastPlayer.x, lastPlayer.y)].concat(navPath.slice(pathNearest(navPath, lastPlayer.x, lastPlayer.y) + 1).map(p => toLatLng(p[0], p[1])), [toLatLng(x, y)])
       : [toLatLng(lastPlayer.x, lastPlayer.y), toLatLng(via.x, via.y), toLatLng(x, y)];
@@ -392,7 +392,8 @@ function updateNav() {
     dx = la.x - lastPlayer.x; dy = la.y - lastPlayer.y; d = Math.max(d, la.rest);
   }
   const ang = (Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360;   // 0 = север (вверх)
-  nav.querySelector('.arrow').textContent = d < 12 ? '📍' : ARROWS[Math.round(ang / 45) % 8];
+  const arrow = nav.querySelector('.arrow');
+    if (d < 12) arrow.innerHTML = ICON('pin'); else arrow.textContent = ARROWS[Math.round(ang / 45) % 8];
   nav.classList.toggle('here', d < 12);
   document.getElementById('nav-txt').textContent =
     prefix + (d < 12 ? `${name} — ты на месте` : `${name} — ${Math.round(d)} ед.`) + layerTxt;
@@ -405,6 +406,11 @@ function updateNav() {
 }
 
 // нижняя панель мини-режима
+// иконки кнопок мини-режима и строки «ведём к цели»
+[['mb-out', 'minus'], ['mb-in', 'plus'], ['mb-follow', 'follow'], ['mb-chest', 'chest'],
+ ['mb-clear', 'clear'], ['mb-route', 'route'], ['mb-home', 'home'],
+ ['nav-path', 'path'], ['nav-skip', 'skip'], ['nav-x', 'x']]
+  .forEach(([id, ic]) => { document.getElementById(id).innerHTML = ICON(ic); });
 document.getElementById('mb-in').onclick = () => map.zoomIn(0.5);
 document.getElementById('mb-out').onclick = () => map.zoomOut(0.5);
 document.getElementById('mb-home').onclick = () => selectRegion(null);

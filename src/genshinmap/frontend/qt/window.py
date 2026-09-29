@@ -14,7 +14,7 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QTimer, QUrl
+from PyQt6.QtCore import QSize, Qt, QTimer, QUrl
 from PyQt6.QtGui import QDesktopServices, QIcon
 from PyQt6.QtWebChannel import QWebChannel
 from PyQt6.QtWebEngineCore import (
@@ -24,9 +24,9 @@ from PyQt6.QtWebEngineCore import (
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import (
     QApplication,
-    QComboBox,
     QDockWidget,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -36,7 +36,6 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizeGrip,
-    QStatusBar,
     QVBoxLayout,
     QWidget,
 )
@@ -97,8 +96,10 @@ from genshinmap.frontend.qt.bridge import MapBridge
 from genshinmap.frontend.qt.calibration_dialog import CalibrationDialog
 from genshinmap.frontend.qt.hotkeys import HotkeyManager, is_admin
 from genshinmap.frontend.qt.hud import NavHud
+from genshinmap.frontend.qt.icons import icon
 from genshinmap.frontend.qt.input_watcher import InputWatcher
 from genshinmap.frontend.qt.settings_dialog import SettingsDialog
+from genshinmap.frontend.theme import C, qss
 
 MAP_HTML = WEB_DIR / "map.html"
 TEMPLATES_DIR = PROJECT_ROOT / "assets" / "templates"
@@ -135,46 +136,7 @@ PENDING_MARK_TIMEOUT = 8.0
 LAST_DETECT_TTL = 20.0
 
 # Тёмная тема Qt в тон веб-карте.
-DARK_QSS = """
-QMainWindow, QWidget { background: #0f1420; color: #dfe6f2;
-    font-family: 'Segoe UI', sans-serif; font-size: 13px; }
-QDockWidget { titlebar-close-icon: none; }
-QDockWidget::title { background: #141b2b; padding: 8px 12px;
-    border-bottom: 1px solid #26314a; color: #9fb3d8; font-weight: 600; }
-QLabel { color: #b9c6df; }
-QLabel#section { color: #7f93b8; font-size: 11px; font-weight: 700;
-    text-transform: uppercase; padding-top: 6px; }
-QLabel#hint { color: #6f7f9f; font-size: 11px; }
-QLabel#posStatus { color: #cfe0ff; background: #0c1120; border: 1px solid #26314a;
-    border-radius: 6px; padding: 5px 8px; font-size: 12px; }
-QComboBox { background: #0c1120; border: 1px solid #2c3956; border-radius: 6px;
-    padding: 6px 10px; color: #eaf0fb; }
-QComboBox:hover { border-color: #4d90fe; }
-QComboBox QAbstractItemView { background: #10192b; color: #eaf0fb;
-    selection-background-color: #2b62c4; border: 1px solid #2c3956; outline: none; }
-QPushButton { background: #1c2740; border: 1px solid #2c3956; border-radius: 8px;
-    padding: 8px 12px; color: #eaf0fb; font-weight: 600; }
-QPushButton:hover { background: #24345a; border-color: #4d90fe; }
-QPushButton:pressed { background: #182238; }
-QPushButton:checked { background: #1f3d2a; border-color: #3fb950; color: #c9f5c0; }
-QPushButton:disabled { color: #56627a; border-color: #222c40; }
-QPushButton#resetBtn { background: #3a1f26; border-color: #6e3540; color: #ffd7dc; }
-QPushButton#resetBtn:hover { background: #522a33; border-color: #b0566a; }
-QListWidget { background: #0c1120; border: 1px solid #26314a; border-radius: 8px;
-    padding: 4px; }
-QListWidget::item { padding: 4px 6px; border-radius: 5px; }
-QListWidget::item:hover { background: #182236; }
-QListWidget::item:selected { background: #1f3358; }
-QStatusBar { background: #141b2b; color: #9fb3d8; border-top: 1px solid #26314a; }
-QScrollBar:vertical { background: #0c1120; width: 10px; margin: 0; }
-QScrollBar::handle:vertical { background: #2c3956; border-radius: 5px; min-height: 24px; }
-QScrollBar::handle:vertical:hover { background: #3f5686; }
-QScrollBar::add-line, QScrollBar::sub-line { height: 0; }
-QGroupBox { border: 1px solid #26314a; border-radius: 8px; margin-top: 14px; padding: 10px; }
-QGroupBox::title { subcontrol-origin: margin; left: 10px; color: #9fb3d8; }
-QLineEdit, QSpinBox, QDoubleSpinBox { background: #0c1120; border: 1px solid #2c3956;
-    border-radius: 6px; padding: 4px 8px; color: #eaf0fb; }
-"""
+DARK_QSS = qss()      # общий стиль окон (frontend/theme.py)
 
 
 class _RefererInterceptor(QWebEngineUrlRequestInterceptor):
@@ -204,6 +166,29 @@ def _hint(text: str) -> QLabel:
     lbl.setObjectName("hint")
     lbl.setWordWrap(True)
     return lbl
+
+
+def _card() -> tuple[QFrame, QVBoxLayout]:
+    """Раздел панели: рамка-карточка с отступами."""
+    frame = QFrame()
+    frame.setObjectName("card")
+    lay = QVBoxLayout(frame)
+    lay.setContentsMargins(12, 10, 12, 12)
+    lay.setSpacing(8)
+    return frame, lay
+
+
+def _button(text: str, icon_name: str, tip: str = "", obj: str = "",
+            checkable: bool = False) -> QPushButton:
+    b = QPushButton(icon(icon_name, checked_color=C["good_text"]), text)
+    b.setIconSize(QSize(16, 16))
+    b.setCursor(Qt.CursorShape.PointingHandCursor)
+    if tip:
+        b.setToolTip(tip)
+    if obj:
+        b.setObjectName(obj)
+    b.setCheckable(checkable)
+    return b
 
 
 class _TitleBar(QWidget):
@@ -369,6 +354,7 @@ class OverlayWindow(QMainWindow):
         self.bridge.navPathReady.connect(self._on_nav_path)
         self.bridge.routeClipRequested.connect(self._on_route_clip_requested)
         self.bridge.questDone.connect(self._on_quest_done)
+        self.bridge.mapSwitchRequested.connect(self.switch_map)
         self.bridge.routeClipReady.connect(
             lambda pid, url: self._js(f"window.showRouteClip({json.dumps(pid)}, {json.dumps(url)});"))
         self.point_info.loaded.connect(self._on_card_for_hud)
@@ -395,12 +381,6 @@ class OverlayWindow(QMainWindow):
         layout.addWidget(self.view)
         self.setCentralWidget(central)
 
-        # --- Статус-бар: запущен ли Genshin ---
-        self.status = QStatusBar()
-        self.status_label = QLabel("Проверяю Genshin…")
-        self.status.addPermanentWidget(self.status_label)
-        self.setStatusBar(self.status)
-
         # --- Панель управления (карта, позиция, распознавание, журнал) ---
         self._build_control_dock()
 
@@ -416,16 +396,11 @@ class OverlayWindow(QMainWindow):
         self.hotkeys.togglePath.connect(lambda: self._js("window.togglePath && window.togglePath();"))
         self.hotkeys.start()
         if self.hotkeys.failed:
-            self._log("Хоткеи заняты другой программой: " + ", ".join(self.hotkeys.failed)
-                      + " — поменяй в ⚙ Настройках")
+            keys = ", ".join("+".join(k.strip("<>").capitalize() for k in h.split("+") if k)
+                             for h in self.hotkeys.failed)     # <ctrl>+<alt>+m -> Ctrl+Alt+M
+            self._log("Хоткеи заняты другой программой: " + keys + " — поменяй в Настройках")
         if not is_admin():
-            self.admin_btn = QPushButton("🛡 Запустить от администратора")
-            self.admin_btn.setToolTip("Genshin работает с правами администратора; с теми же "
-                                      "правами хоткеи и чтение клавиш из игры надёжнее. "
-                                      "Включает постоянный запуск от администратора.")
-            self.admin_btn.setStyleSheet("padding:3px 10px;font-weight:500;")
-            self.admin_btn.clicked.connect(self._restart_as_admin)
-            self.status.addWidget(self.admin_btn)
+            self.admin_btn.show()
 
         # Мини-режим: полоса сверху (перетаскивание + ⤢) и уголок размера.
         self.title_bar = _TitleBar(self, self.toggle_overlay_mode,
@@ -536,11 +511,6 @@ class OverlayWindow(QMainWindow):
         self._load_current_map()
         self.view.load(_map_url(self.current_map_id))  # перезагрузка с новым bundle
 
-    def _on_map_combo(self, index: int) -> None:
-        map_id = self.map_combo.itemData(index)
-        if map_id is not None:
-            self.switch_map(int(map_id))
-
     # ---- Панель управления ----
     def _build_control_dock(self) -> None:
         self.detector_service = DetectionService(TEMPLATES_DIR)
@@ -551,70 +521,65 @@ class OverlayWindow(QMainWindow):
         dock = QDockWidget("Управление", self)
         dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea)
         dock.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
+        dock.setTitleBarWidget(QWidget())          # заголовок дока не нужен — есть разделы
         self.control_dock = dock
         panel = QWidget()
-        panel.setMinimumWidth(270)
+        panel.setMinimumWidth(280)
+        panel.setMaximumWidth(340)
         v = QVBoxLayout(panel)
-        v.setSpacing(6)
+        v.setContentsMargins(12, 12, 12, 12)
+        v.setSpacing(10)
 
-        # --- выбор карты ---
-        v.addWidget(_section("Карта"))
-        self.map_combo = QComboBox()
-        for m in self.maps:
-            self.map_combo.addItem(m["name"], m["id"])
-            if m["id"] == self.current_map_id:
-                self.map_combo.setCurrentIndex(self.map_combo.count() - 1)
-        self.map_combo.currentIndexChanged.connect(self._on_map_combo)
-        v.addWidget(self.map_combo)
-
-        self.overlay_btn = QPushButton("🔲 Мини-оверлей поверх игры")
-        self.overlay_btn.setToolTip("Ctrl+Alt+O — вкл/выкл. В мини-режиме окно тащится мышью.")
-        self.overlay_btn.clicked.connect(self.toggle_overlay_mode)
-        v.addWidget(self.overlay_btn)
-        self.ontop_btn = QPushButton("📌 Поверх всех окон")
-        self.ontop_btn.setCheckable(True)
-        self.ontop_btn.setChecked(bool(self.settings.get("always_on_top", True)))
-        self.ontop_btn.setToolTip("Держать окно карты поверх игры (в обычном режиме)")
-        self.ontop_btn.clicked.connect(self._toggle_on_top)
-        v.addWidget(self.ontop_btn)
-
-        # --- позиция игрока ---
-        v.addWidget(_section("Позиция игрока"))
-        row = QHBoxLayout()
-        self.track_btn = QPushButton("📍 Отслеживать")
-        self.track_btn.setCheckable(True)
-        self.track_btn.setToolTip("Определять позицию по мини-карте и показывать на карте")
-        self.track_btn.clicked.connect(self._toggle_tracking)
-        self.calib_btn = QPushButton("🎯 Калибровка")
-        self.calib_btn.setToolTip("Указать, где на экране мини-карта и плашка подбора")
-        self.calib_btn.clicked.connect(self._open_calibration)
-        row.addWidget(self.track_btn, 1)
-        row.addWidget(self.calib_btn, 1)
-        v.addLayout(row)
+        # --- Игра: запущена ли, что распознаётся, позиция ---
+        card, c = _card()
+        self.status_label = QLabel("Проверяю Genshin…")
+        self.status_label.setObjectName("title")
+        c.addWidget(self.status_label)
         # «Что я вижу»: что распознаётся прямо сейчас (понятно, на каком этапе сбой)
         self.see_label = QLabel()
         self.see_label.setObjectName("posStatus")
         self.see_label.setWordWrap(True)
         self.see_label.setTextFormat(Qt.TextFormat.RichText)
-        v.addWidget(self.see_label)
+        c.addWidget(self.see_label)
         self._see_timer = QTimer(self)
         self._see_timer.timeout.connect(self._update_see)
         self._see_timer.start(1000)
         self.pos_label = QLabel("Отслеживание выключено")
-        self.pos_label.setObjectName("posStatus")
+        self.pos_label.setObjectName("hint")
         self.pos_label.setWordWrap(True)
-        v.addWidget(self.pos_label)
-        self.rec_btn = QPushButton("⏺ Запись отладки")
+        c.addWidget(self.pos_label)
+        self.warn_label = QLabel()                 # окно карты что-то закрывает и т.п.
+        self.warn_label.setObjectName("warnBox")
+        self.warn_label.setWordWrap(True)
+        self.warn_label.hide()
+        c.addWidget(self.warn_label)
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self.track_btn = _button("Отслеживать", "locate", "Определять позицию по мини-карте и "
+                                 "показывать на карте", obj="primary", checkable=True)
+        self.track_btn.clicked.connect(self._toggle_tracking)
+        self.calib_btn = _button("Калибровка", "scan", "Указать, где на экране мини-карта "
+                                 "и плашка подбора")
+        self.calib_btn.clicked.connect(self._open_calibration)
+        row.addWidget(self.track_btn, 1)
+        row.addWidget(self.calib_btn, 1)
+        c.addLayout(row)
+        self.admin_btn = _button("Запустить от администратора", "shield",
+                                 "Genshin работает с правами администратора; с теми же правами "
+                                 "хоткеи и чтение клавиш из игры надёжнее. Включает постоянный "
+                                 "запуск от администратора.", obj="flat")
+        self.admin_btn.clicked.connect(self._restart_as_admin)
+        self.admin_btn.hide()
+        c.addWidget(self.admin_btn)
+        v.addWidget(card)
+
+        self.rec_btn = QPushButton("Запись отладки")
         self.rec_btn.setCheckable(True)
-        self.rec_btn.setToolTip("Сохранять кадры мини-карты и плашки подбора в папку debug/ — "
-                                "для настройки распознавания. Ctrl+Alt+B — закладка.")
         self.rec_btn.clicked.connect(self._toggle_recording)
         self.rec_btn.hide()            # запись автоматическая (⚙ Настройки → автозапись)
-
-        # --- авто-отметка ---
         # Блок «Авто-отметка сбора» не показываем: авто-отметка включена всегда
         # (сундуки — по плашке «Опыт приключений», окулусы — по мини-карте).
-        self.detect_btn = QPushButton("▶ Распознавать подбор")
+        self.detect_btn = QPushButton("Распознавать подбор")
         self.detect_btn.setCheckable(True)
         self.detect_btn.clicked.connect(self._toggle_detection)
         self.detect_btn.hide()
@@ -622,21 +587,54 @@ class OverlayWindow(QMainWindow):
         self.detect_info = _hint(self._templates_hint(n_tmpl))
         self.detect_info.hide()
 
+        # --- Окно: мини-оверлей и «поверх всех» ---
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self.overlay_btn = _button("Мини-оверлей", "overlay",
+                                   "Маленькое окно карты поверх игры (Ctrl+Alt+O). "
+                                   "Тащится за верхнюю полосу, размер — за уголок.")
+        self.overlay_btn.clicked.connect(self.toggle_overlay_mode)
+        self.ontop_btn = _button("Поверх окон", "pin", "Держать окно карты поверх игры "
+                                 "(в обычном режиме)", checkable=True)
+        self.ontop_btn.setChecked(bool(self.settings.get("always_on_top", True)))
+        self.ontop_btn.clicked.connect(self._toggle_on_top)
+        row.addWidget(self.overlay_btn, 1)
+        row.addWidget(self.ontop_btn, 1)
+        v.addLayout(row)
+
+        # --- Журнал отметок ---
         head = QHBoxLayout()
-        head.addWidget(_section("Журнал"), 1)
-        self.undo_btn = QPushButton("↶ Отменить")
-        self.undo_btn.setToolTip("Снять последнюю авто-отметку")
+        head.addWidget(_section("ЖУРНАЛ"), 1)
+        self.undo_btn = _button("Отменить", "undo", "Снять последнюю авто-отметку (Ctrl+Alt+Z)",
+                                obj="flat")
         self.undo_btn.setEnabled(False)
         self.undo_btn.clicked.connect(self._undo_auto_mark)
         head.addWidget(self.undo_btn)
         v.addLayout(head)
         self.detect_log = QListWidget()
+        self.detect_log.setWordWrap(True)
+        self.detect_log.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.detect_log.setToolTip("Двойной клик по отметке — показать точку на карте")
         self.detect_log.itemDoubleClicked.connect(self._on_log_double_click)
+        # пустой журнал — подсказка, что сюда попадёт (а не пустой прямоугольник)
+        self.log_empty = QLabel("Здесь появятся отметки «собрано» и события. "
+                                "Двойной клик по строке — показать точку на карте.")
+        self.log_empty.setObjectName("hint")
+        self.log_empty.setWordWrap(True)
+        self.log_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        QVBoxLayout(self.detect_log.viewport()).addWidget(self.log_empty)
+        self.detect_log.model().rowsInserted.connect(lambda *_: self.log_empty.hide())
         v.addWidget(self.detect_log, 1)
 
-        # --- примогемы (оценка по типам собранных сундуков) ---
-        v.addWidget(_section("💎 Примогемы из сундуков"))
+        # --- Примогемы (оценка по типам собранных сундуков) ---
+        card, c = _card()
+        head = QHBoxLayout()
+        head.setSpacing(6)
+        gem = QLabel()
+        gem.setPixmap(icon("gem", C["accent"]).pixmap(16, 16))
+        head.addWidget(gem)
+        head.addWidget(_section("ПРИМОГЕМЫ ИЗ СУНДУКОВ"), 1)
+        c.addLayout(head)
         self.gems_label = QLabel()
         self.gems_label.setObjectName("posStatus")
         self.gems_label.setWordWrap(True)
@@ -644,47 +642,44 @@ class OverlayWindow(QMainWindow):
                                    "Драгоценный ~5, Роскошный ~10, Удивительный ~5.\n"
                                    "Точные числа в игре плавают — меняются в settings.json "
                                    "(\"primogems\").")
-        v.addWidget(self.gems_label)
+        c.addWidget(self.gems_label)
+        v.addWidget(card)
         self._update_gems()
 
         # --- обновление (кнопка видна, только когда есть новая версия) ---
-        self.update_btn = QPushButton("⬇ Обновить")
-        self.update_btn.setStyleSheet("background:#1f3d2a;border-color:#3fb950;color:#c9f5c0;")
+        self.update_btn = _button("Обновить", "download", obj="update")
         self.update_btn.clicked.connect(self._install_update)
         self.update_btn.hide()
         v.addWidget(self.update_btn)
 
-        # --- прочее ---
+        # --- Настройки и прогресс ---
         row = QHBoxLayout()
-        self.settings_btn = QPushButton("⚙ Настройки")
+        row.setSpacing(8)
+        self.settings_btn = _button("Настройки", "settings")
         self.settings_btn.clicked.connect(self._open_settings)
-        self.reset_btn = QPushButton("🗑 Сброс")
-        self.reset_btn.setToolTip("Снять все отметки «собрано» (двойное нажатие)")
-        self.reset_btn.setObjectName("resetBtn")
-        self.reset_btn.clicked.connect(self._reset_progress)
-        self.progress_btn = QPushButton("💾 Прогресс")
-        self.progress_btn.setToolTip("Сохранить прогресс в файл / загрузить из файла")
+        self.progress_btn = _button("Прогресс", "save", "Сохранить, загрузить, импортировать "
+                                    "или сбросить отметки «собрано»")
         menu = QMenu(self.progress_btn)
-        menu.addAction("Сохранить в файл…", self._export_progress)
-        menu.addAction("Загрузить из файла…", self._import_progress)
+        menu.addAction(icon("upload"), "Сохранить в файл…", self._export_progress)
+        menu.addAction(icon("download"), "Загрузить из файла…", self._import_progress)
         menu.addSeparator()
-        menu.addAction("Импорт с HoYoLAB / appsample…", self._open_import)
+        menu.addAction(icon("import"), "Импорт с HoYoLAB / appsample…", self._open_import)
+        menu.addSeparator()
+        menu.addAction(icon("trash", C["danger"]), "Сбросить все отметки…", self._reset_progress)
         self.progress_btn.setMenu(menu)
         row.addWidget(self.settings_btn, 1)
         row.addWidget(self.progress_btn, 1)
-        row.addWidget(self.reset_btn)
         v.addLayout(row)
         ver = QHBoxLayout()
         ver.addWidget(_hint(f"Версия {__version__}"), 1)
-        check_btn = QPushButton("⟳ Обновления")
-        check_btn.setToolTip("Проверить новую версию программы и данные карты сейчас")
+        check_btn = _button("Проверить обновления", "refresh",
+                            "Проверить новую версию программы и данные карты сейчас", obj="flat")
         check_btn.clicked.connect(lambda: self._check_updates(force=True))
         ver.addWidget(check_btn)
         v.addLayout(ver)
 
         dock.setWidget(panel)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
-        self._reset_armed = False
 
     def _open_settings(self) -> None:
         dlg = SettingsDialog(self.settings.data, parent=self)
@@ -756,25 +751,23 @@ class OverlayWindow(QMainWindow):
             self.detector_service.region = region_from_frac(frac, game_rect(sct), "pickup_region")
 
     def _reset_progress(self) -> None:
-        """Снять все отметки «собрано» — по второму нажатию (защита от случайного клика)."""
-        if not self._reset_armed:
-            self._reset_armed = True
-            self.reset_btn.setText("Точно?")
-            QTimer.singleShot(3000, self._disarm_reset)
+        """Снять все отметки «собрано» — только после подтверждения."""
+        box = QMessageBox(QMessageBox.Icon.Warning, tr("Сбросить прогресс?"),
+                          tr("Снять все отметки «собрано»? Отменить это нельзя — сначала "
+                             "можно сохранить прогресс в файл.") + f" ({len(self.store.collected)})",
+                          QMessageBox.StandardButton.Cancel, self)
+        ok = box.addButton(tr("Сбросить"), QMessageBox.ButtonRole.DestructiveRole)
+        box.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        box.exec()
+        if box.clickedButton() is not ok:
             return
-        self._disarm_reset()
         self.store.collected.clear()
-        self.store.save()
         self._auto_marks.clear()
         self.undo_btn.setEnabled(False)
         self.store.probable.clear()
         self.store.save()
         self._js("window.applyCollected([], []);")
         self._log("Прогресс сброшен — ничего не отмечено")
-
-    def _disarm_reset(self) -> None:
-        self._reset_armed = False
-        self.reset_btn.setText("🗑 Сброс")
 
     def _templates_hint(self, n: int) -> str:
         if n == 0:
@@ -1339,6 +1332,7 @@ class OverlayWindow(QMainWindow):
                                chip(pos is not None, "позиция"),
                                chip(chest_t is not None and chest_t < 60, "сундук")])
         scene = SCENES.get(self._scene, ("", None))[0]
+        self.pos_label.setVisible(tracking)
         if not tracking:
             scene = "отслеживание выключено"
         html += f"<br><span style='color:#c9d4e8'>{tr('Сейчас')}: {tr(scene)}</span>"
@@ -1676,15 +1670,19 @@ class OverlayWindow(QMainWindow):
         return self._covers("minimap")
 
     def _on_position_status(self, text: str) -> None:
+        warn = ""
         if self.position_service.running and self._minimap_covered():
-            text = ("⚠ Окно карты закрывает мини-карту игры — позицию не найти. "
-                    "Сдвинь окно вправо или включи мини-оверлей (Ctrl+Alt+O).\n" + text)
+            warn = ("⚠ Окно карты закрывает мини-карту игры — позицию не найти. "
+                    "Сдвинь окно вправо или включи мини-оверлей (Ctrl+Alt+O).")
         elif self.position_service.running and self._covers("prompt_region"):
-            text = ("⚠ Окно карты закрывает подсказки у персонажа («F ▶ … сундук») — "
-                    "сундуки распознаются хуже. Сдвинь окно в сторону.\n" + text)
+            warn = ("⚠ Окно карты закрывает подсказки у персонажа («F ▶ … сундук») — "
+                    "сундуки распознаются хуже. Сдвинь окно в сторону.")
         elif self.position_service.running and self._covers("pickup_region"):
-            text = ("⚠ Окно карты закрывает список «Получено» слева — открытие сундуков "
-                    "не распознать. Сдвинь окно правее.\n" + text)
+            warn = ("⚠ Окно карты закрывает список «Получено» слева — открытие сундуков "
+                    "не распознать. Сдвинь окно правее.")
+        # предупреждение — отдельной плашкой, чтобы не терялось в строке статуса
+        self.warn_label.setText(warn)
+        self.warn_label.setVisible(bool(warn))
         self.pos_label.setText(text)
 
     def _on_scale_calibrated(self, map_id: int, scale: float) -> None:
@@ -1721,7 +1719,6 @@ class OverlayWindow(QMainWindow):
         if self._overlay_mode:
             self._normal_geometry = self.geometry()
             self.control_dock.hide()
-            self.statusBar().hide()
             # прячем панели веб-карты, чтобы карта заняла всё окно
             self._js(f"window.setCompact(true, {json.dumps(self.ui_state.data.get('compact_zoom'))});")
             self.setWindowFlags(
@@ -1748,7 +1745,6 @@ class OverlayWindow(QMainWindow):
             for wdg in (self.title_bar, self.size_grip):
                 wdg.hide()
             self.control_dock.show()
-            self.statusBar().show()
             self._js("window.setCompact(false);")
             self.setWindowFlags(Qt.WindowType.Window | self._top_flags())
             self._save_mode()
@@ -2038,7 +2034,7 @@ class OverlayWindow(QMainWindow):
     def _update_game_status(self) -> None:
         self._game_running_cache = is_genshin_running()
         if self._game_running_cache:
-            self.status_label.setText("🟢 Genshin запущен")
+            self.status_label.setText(f"<span style='color:{C['good']}'>●</span> {tr('Genshin запущен')}")
             self._auto_recording(True)
             # игра запущена — сразу следим за позицией (для авто-отметки);
             # один раз за запуск игры, чтобы ручное выключение не перебивать
@@ -2049,5 +2045,6 @@ class OverlayWindow(QMainWindow):
         else:
             self._auto_track_done = False
             self._auto_recording(False)
-            self.status_label.setText("⚪ Genshin не запущен")
+            self.status_label.setText(f"<span style='color:{C['text_mut']}'>●</span> "
+                                      f"{tr('Genshin не запущен')}")
 

@@ -35,7 +35,7 @@ function initMap() {
   // подписи регионов — отдельная панель ПОВЕРХ иконок (иначе их не прочесть)
   map.createPane('regionPane').style.zIndex = 650;
   map.createPane('anchorPane').style.zIndex = 450;   // названия мест — под иконками
-  map.createPane('pathPane').style.zIndex = 445;     // линии пути — по кнопке «👣»
+  map.createPane('pathPane').style.zIndex = 445;     // линии пути — по кнопке «путь»
   map.getPane('pathPane').style.display = 'none';
   markerLayer.addTo(map);
   regionLayer.addTo(map);
@@ -44,11 +44,12 @@ function initMap() {
   buildRegionLabels();
   buildAnchors();
   map.on('zoomend', updateRegionLabels);
+  map.on('moveend', debounce(declutterAnchors, 120));
   map.on('click', () => document.getElementById('sheet').classList.remove('on'));
   map.on('contextmenu', e => {
     const x = e.latlng.lng - META.origin[0], y = -e.latlng.lat - META.origin[1];
     L.popup({ className: 'gm-card', maxWidth: 240 }).setLatLng(e.latlng)
-      .setContent(`<div class="card-btns"><button class="primary" onclick="addCustomHere(${x.toFixed(1)}, ${y.toFixed(1)})">⭐ Своя точка здесь</button></div>` +
+      .setContent(`<div class="card-btns"><button class="primary" onclick="addCustomHere(${x.toFixed(1)}, ${y.toFixed(1)})">${ICON('star')}Своя точка здесь</button></div>` +
                   '<div class="card-muted">Сундук или что-то ещё, чего нет на карте</div>')
       .openOn(map);
   });
@@ -65,28 +66,36 @@ function addViewControls() {
     onAdd: function () {
       const box = L.DomUtil.create('div', 'leaflet-bar gm-ctl');
       const home = L.DomUtil.create('a', '', box);
-      home.innerHTML = '⌂'; home.title = 'Вся карта';
+      home.innerHTML = ICON('home'); home.title = 'Вся карта';
       home.onclick = () => { selectRegion(null); };
       meBtn = L.DomUtil.create('a', 'off', box);
-      meBtn.innerHTML = '⌖'; meBtn.title = 'Показать игрока (нужно отслеживание позиции)';
+      meBtn.innerHTML = ICON('locate'); meBtn.title = 'Показать игрока (нужно отслеживание позиции)';
       meBtn.onclick = () => { if (lastPlayer) map.setView(toLatLng(lastPlayer.x, lastPlayer.y), Math.max(map.getZoom(), 0)); };
       followBtn = L.DomUtil.create('a', 'off', box);
-      followBtn.innerHTML = '◎'; followBtn.title = 'Следовать за игроком';
+      followBtn.innerHTML = ICON('follow'); followBtn.title = 'Следовать за игроком';
       followBtn.onclick = () => { if (lastPlayer) setFollow(!follow); };
       nearBtn = L.DomUtil.create('a', 'off', box);
-      nearBtn.innerHTML = '🧰'; nearBtn.title = 'Вести к ближайшему несобранному сундуку';
+      nearBtn.innerHTML = ICON('chest'); nearBtn.title = 'Вести к ближайшему несобранному сундуку';
       nearBtn.onclick = navNearestChest;
       const routeBtn = L.DomUtil.create('a', '', box);
-      routeBtn.innerHTML = '🗺'; routeBtn.title = 'Маршрут по несобранным сундукам региона';
+      routeBtn.innerHTML = ICON('route'); routeBtn.title = 'Маршрут по несобранным сундукам региона';
       routeBtn.onclick = () => (route ? clearTarget() : startRoute());
       const clearBtn = L.DomUtil.create('a', '', box);
-      clearBtn.innerHTML = '🧹'; clearBtn.title = 'Зачистка региона: что осталось';
+      clearBtn.innerHTML = ICON('clear'); clearBtn.title = 'Зачистка региона: что осталось';
       clearBtn.onclick = () => toggleClear();
+      for (const a of box.querySelectorAll('a')) {       // доступное имя = подсказка
+        a.setAttribute('role', 'button'); a.setAttribute('aria-label', a.title); a.href = '#';
+        a.addEventListener('click', e => e.preventDefault());
+      }
       L.DomEvent.disableClickPropagation(box);
       return box;
     },
   });
   new Ctl({ position: 'topright' }).addTo(map);
+  const zin = document.querySelector('.leaflet-control-zoom-in');
+  const zout = document.querySelector('.leaflet-control-zoom-out');
+  if (zin) zin.innerHTML = ICON('plus');
+  if (zout) zout.innerHTML = ICON('minus');
 }
 
 // ---------- Регионы ----------
@@ -147,7 +156,7 @@ window.toggleHeat = function () {
   heatOn = !heatOn;
   if (heatOn) heatLayer.addTo(map); else map.removeLayer(heatLayer);
   drawHeat();
-  alertNav(heatOn ? '🔥 Показано, где остались сундуки (цифра — сколько)' : 'Тепловая карта скрыта');
+  alertNav(heatOn ? 'Показано, где остались сундуки (цифра — сколько)' : 'Тепловая карта скрыта');
   if (clearOpen) document.getElementById('sheet-body').innerHTML = clearHtml();
 };
 
@@ -175,6 +184,27 @@ function updateRegionLabels() {
   el.classList.toggle('hide-region-labels', !far);
   el.classList.toggle('show-a1', !far && z < zmin + 3);
   el.classList.toggle('show-a2', z >= zmin + 2.5);
+  declutterAnchors();
+}
+
+// Подписи не должны налезать друг на друга: идём от крупных (регионы, районы) к мелким
+// и прячем подпись, если она перекрывает уже показанную. Только видимые на экране.
+function declutterAnchors() {
+  const box = document.getElementById('map').getBoundingClientRect();
+  const els = [...document.querySelectorAll('#map .gm-region-lbl, #map .gm-anchor')];
+  els.forEach(e => e.classList.remove('clash'));
+  const shown = [];
+  const rank = e => e.classList.contains('gm-region-lbl') ? 0 : e.classList.contains('l1') ? 1 : 2;
+  const byLevel = els.filter(e => getComputedStyle(e).display !== 'none')
+    .sort((a, b) => rank(a) - rank(b));
+  for (const e of byLevel) {
+    const r = e.getBoundingClientRect();
+    if (r.right < box.left || r.left > box.right || r.bottom < box.top || r.top > box.bottom) continue;
+    const pad = 4;
+    if (shown.some(o => r.left < o.right + pad && r.right > o.left - pad &&
+                        r.top < o.bottom + pad && r.bottom > o.top - pad)) e.classList.add('clash');
+    else shown.push(r);
+  }
 }
 
 function selectRegion(id, opts) {

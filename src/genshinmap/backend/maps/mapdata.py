@@ -78,7 +78,9 @@ def load_map_payload(map_id: int, name: str, custom: list[dict] | None = None) -
     regions = build_regions(map_id, points)
     for r in regions:
         r["name"] = tr(r["name"])
-    return {"meta": meta, "labels": used_labels, "points_by_label": points_by_label,
+    maps = [{"id": m["id"], "name": tr(m["name"])} for m in load_map_index()]
+    return {"meta": meta, "maps": maps, "map_id": map_id,
+            "labels": used_labels, "points_by_label": points_by_label,
             "regions": regions, "anchors": anchors,
             "ui": {"lang": i18n.lang(), "table": i18n.table() if en else {}}}
 

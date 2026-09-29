@@ -98,15 +98,25 @@ function refreshPanel() {
   renderActive();
 }
 
+// Включённые слои: одна строка-сводка «Слоёв на карте: N», чипы — под ней
+// (свёрнуты до двух строк, чтобы список категорий не уезжал вниз).
+let activeOpen = false;
 function renderActive() {
   const box = document.getElementById('active');
+  const bar = document.getElementById('active-bar');
+  const tog = document.getElementById('active-toggle');
   box.innerHTML = '';
+  bar.style.display = enabled.size ? '' : 'none';
+  tog.innerHTML = `${ICON('layers')}<span>Слоёв на карте: <b>${enabled.size}</b></span>` +
+    (enabled.size > 4 ? ICON('chevron', 'chev' + (activeOpen ? ' up' : '')) : '');
+  tog.setAttribute('aria-expanded', String(activeOpen));
+  box.classList.toggle('collapsed', !activeOpen && enabled.size > 4);
   for (const id of enabled) {
     const l = labelById[id];
     if (!l) continue;
     const chip = document.createElement('span'); chip.className = 'chip';
     chip.title = 'Выключить слой';
-    chip.innerHTML = `<img src="${iconUrl(id)}" onerror="this.remove()"><span></span><b>×</b>`;
+    chip.innerHTML = `<img src="${iconUrl(id)}" alt="" onerror="this.remove()"><span></span>${ICON('x', 'x')}`;
     chip.querySelector('span').textContent = l.name;
     chip.onclick = () => setLabel(id, false);
     box.appendChild(chip);
@@ -135,12 +145,34 @@ function updateRegionProgress() {
 }
 
 document.getElementById('search').addEventListener('input', refreshPanel);
+document.getElementById('btn-hide').innerHTML = `${ICON('eyeoff')}<span>Скрыть собранные</span>`;
 document.getElementById('btn-hide').onclick = () => setHideCollected(!hideCollected);
 document.getElementById('btn-clear').onclick = clearLayers;
+document.getElementById('active-toggle').onclick = () => {
+  if (enabled.size <= 4) return;
+  activeOpen = !activeOpen;
+  renderActive();
+};
+
+// Выбор карты (Тейват, Энканомия, …) — Python перезагружает страницу с нужными данными
+function fillMapSelect(maps, current) {
+  const sel = document.getElementById('mapsel');
+  sel.innerHTML = '';
+  (maps.length ? maps : [{ id: current, name: META.name || 'Карта' }]).forEach(m => {
+    const o = document.createElement('option');
+    o.value = m.id; o.textContent = m.name;
+    if (String(m.id) === String(current)) o.selected = true;
+    sel.appendChild(o);
+  });
+  sel.disabled = maps.length < 2;
+}
+document.getElementById('mapsel').onchange = e => {
+  const id = Number(e.target.value);
+  if (bridge && bridge.switch_map) bridge.switch_map(id);
+};
 
 function updateStat() {
   const total = LABELS.reduce((s, l) => s + l.count, 0);
-  document.getElementById('badge').textContent = LABELS.length + ' кат.';
   const ri = lastRenderInfo;
   let view = '';
   if (enabled.size) {
